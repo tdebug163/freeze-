@@ -2,3 +2,4 @@ pyrogram
 tgcrypto
 psycopg2-binary
 flask
+pyTelegramBotAPI
