@@ -300,21 +300,26 @@ async def perform_action_async(action, acc_id, owner_id):
         if exec_client.is_connected: await exec_client.disconnect()
     return result_msg
 
-# =========================================================
-# ⚙️ محرك استخراج الجلسات (خوارزمية الصياد العميق لـ TDATA)
-# =========================================================
-def get_dc_ip(dc_id):
+
+
+     def get_dc_ip(dc_id):
     ips = {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}
     return ips.get(dc_id, "149.154.167.51")
 
 def generate_sessions(api_id, dc_id, auth_key_bytes):
+    # 1. بناء جلسة Pyrogram
     pyro_packed = struct.pack(">B?256sQ", dc_id, False, auth_key_bytes, 9999)
     pyro_session = base64.urlsafe_b64encode(pyro_packed).decode("utf-8").rstrip("=")
+    
+    # 2. بناء جلسة Telethon مع التعديل الجديد لمنع خطأ الـ port
     session = StringSession()
-    session._dc_id, session._server_address, session.port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
+    session._dc_id = dc_id
+    session._server_address = get_dc_ip(dc_id)
+    session._port = 443  
+    session._auth_key = AuthKey(auth_key_bytes)
+    
     return pyro_session, session.save()
 
-# 1. الاستخراج من TDATA الرسمي (خوارزمية الصياد العميق 256-Byte الناتجة عن تعارض إصدارات المكتبة)
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None
     
