@@ -44,11 +44,11 @@ from pyrogram.enums import ChatType
 from pyrogram.errors import FloodWait, AuthKeyUnregistered, SessionRevoked
 from telethon.sessions import StringSession
 from telethon.crypto import AuthKey
-from telethon import TelegramClient as OfficialTelethonClient # 🛡️ العميل الرسمي لتجاوز أخطاء TDATA
 
 # المكتبة المتخصصة لفك تشفير TDATA
 try:
     from opentele.td import TDesktop
+    from opentele.tl import TelegramClient as OpenteleClient
     OPENTELE_AVAILABLE = True
 except ImportError:
     OPENTELE_AVAILABLE = False
@@ -60,15 +60,14 @@ except Exception as e:
 # --- المتغيرات ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "8971197244:AAEBSUdjMuKWs7U1qHfU042gGFYhbkn5HVU"  # ⚠️ لا تنسَ وضع توكن البوت الحقيقي هنا مثل: 1234:AAH...
+BOT_TOKEN = "8971197244:AAEBSUdjMuKWs7U1qHfU042gGFYhbkn5HVU"  # تم دمج توكنك بنجاح ✅
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # =========================================================
-# 🗄️ إدارة قواعد البيانات (تم إضافة حماية ضد تداخل المعالجات Thread Safety)
+# 🗄️ إدارة قواعد البيانات (حماية ضد تداخل المعالجات Thread Safety)
 # =========================================================
 def get_db_conn():
-    # check_same_thread=False يمنع انهيار البوت عند استخدامه من قبل عدة مستخدمين بنفس الوقت
     return sqlite3.connect('accounts.db', check_same_thread=False, timeout=20)
 
 def init_db():
@@ -187,7 +186,7 @@ def reveal_accounts(call):
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
 # =========================================================
-# 🔄 محرك فحص الأكواد الذكي (يبحث في جميع الحسابات تلقائياً)
+# 🔄 محرك فحص الأكواد الذكي
 # =========================================================
 @bot.callback_query_handler(func=lambda call: call.data == "req_code")
 def scan_all_codes(call):
@@ -316,10 +315,9 @@ def generate_sessions(api_id, dc_id, auth_key_bytes):
     session._dc_id, session._server_address, session.port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
     return pyro_session, session.save()
 
-# 1. الاستخراج من TDATA الرسمي (مع الحل الجذري لمشكلة unexpected keyword)
+# 1. الاستخراج من TDATA الرسمي (الحل الخارق بدون Client)
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None
-    # البحث عن مجلد TDATA الحقيقي داخل الملف المرفوع
     tdata_path = None
     for root, dirs, files in os.walk(base_dir):
         if 'key_datas' in files or any(len(f)==16 for f in files):
@@ -331,8 +329,22 @@ async def extract_tdata_official(base_dir):
         tdesk = TDesktop(tdata_path)
         if not tdesk.isLoaded(): return None, None
         
-        # 🛡️ إجبار استخدام عميل Telethon الرسمي لمنع الانهيار
-        tl_client = await tdesk.ToTelethon(session="memory", client=OfficialTelethonClient, api_id=API_ID, api_hash=API_HASH)
+        # 🛠️ الحل الجذري والعبقري: الاستخراج المباشر من الذاكرة لتفادي أي خطأ في مكتبة Client
+        try:
+            acc = tdesk.mainAccount
+            auth_key = getattr(acc, 'AuthKey', getattr(acc, 'authKey', None))
+            dc_id = getattr(acc, 'MainDc', getattr(acc, 'mainDc', getattr(acc, 'dcId', None)))
+            
+            if auth_key and dc_id:
+                if hasattr(auth_key, 'key'):
+                    auth_key = auth_key.key
+                if isinstance(auth_key, bytes) and len(auth_key) == 256:
+                    return dc_id, auth_key
+        except Exception as direct_e:
+            logging.debug(f"Direct extraction failed: {direct_e}")
+
+        # 🛠️ طريقة احتياطية: قمنا بإزالة كلمة client التي كانت تسبب الخطأ
+        tl_client = await tdesk.ToTelethon(session="memory", api_id=API_ID, api_hash=API_HASH)
         await tl_client.connect()
         dc_id = tl_client.session.dc_id
         auth_key = tl_client.session.auth_key.key
@@ -384,13 +396,12 @@ async def verify_and_save_async(owner_id, dc_id, auth_key, stype):
     me = await client.get_me()
     phone, first_name = me.phone_number or "Unknown", me.first_name or "User"
     
-    # 🛡️ حماية من تعطل البوت بسبب إصدارات Pyrogram القديمة التي لا تدعم النجوم
+    # 🛡️ حماية النجوم
     try:
         from pyrogram.raw.functions.payments import GetStarsStatus
         res = await client.invoke(GetStarsStatus(peer=await client.resolve_peer("me")))
         stars = getattr(res, "balance", 0)
     except Exception as e:
-        logging.debug(f"تجاوز جلب النجوم: {e}")
         stars = 0
         
     await client.disconnect()
