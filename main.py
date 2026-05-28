@@ -59,7 +59,7 @@ except BaseException as e:
 # --- المتغيرات ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "8971197244:AAHRk4mTQ1ifMQ_lpIkA5ncQF2S2y6yWiwU"  # تم دمج توكنك بنجاح ✅
+BOT_TOKEN = "8971197244:AAHRk4mTQ1ifMQ_lpIkA5ncQF2S2y6yWiwU"  
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -114,7 +114,7 @@ init_db()
 # --- دوال الأعلام ---
 COUNTRY_FLAGS = {
     "+964": ("🇮🇶", "العراق"), "+966": ("🇸🇦", "السعودية"), "+971": ("🇦🇪", "الإمارات"),
-    "+965": ("🇰🇼", "الكويت"), "+974": ("🇶🇦", "قطر"), "+973": ("🇧🇭", "البحرين"), 
+    "+965": ("🇰🇼", "الكويت"), "+974": ("🇶🇦", "قطر"), "+973": ("🇧罕", "البحرين"), 
     "+968": ("🇴🇲", "عُمان"), "+20": ("🇪🇬", "مصر"), "+212": ("🇲🇦", "المغرب"), 
     "+213": ("🇩🇿", "الجزائر"), "+216": ("🇹🇳", "تونس"), "+218": ("🇱🇾", "ليبيا"), 
     "+249": ("🇸🇩", "السودان"), "+967": ("🇾🇪", "اليمن"), "+962": ("🇯🇴", "الأردن"), 
@@ -301,7 +301,7 @@ async def perform_action_async(action, acc_id, owner_id):
     return result_msg
 
 # =========================================================
-# ⚙️ محرك استخراج الجلسات (بما فيها TDATA المعقد)
+# ⚙️ محرك استخراج الجلسات (خوارزمية الصياد العميق لـ TDATA)
 # =========================================================
 def get_dc_ip(dc_id):
     ips = {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}
@@ -314,50 +314,78 @@ def generate_sessions(api_id, dc_id, auth_key_bytes):
     session._dc_id, session._server_address, session.port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
     return pyro_session, session.save()
 
-# 1. الاستخراج من TDATA الرسمي (الحل الخارق لتخطي الحسابات المحمية بخطوتين 2FA)
+# 1. الاستخراج من TDATA الرسمي (خوارزمية الصياد العميق 256-Byte الناتجة عن تعارض إصدارات المكتبة)
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None
     
+    # 🛠️ البحث الذكي عن مسار TDATA الحقيقي داخل المجلد
     tdata_path = None
     for root, dirs, files in os.walk(base_dir):
-        if 'key_datas' in files or any(len(f)==16 for f in files):
+        if 'key_datas' in files or any(len(d) == 16 for d in dirs):
             tdata_path = root
             break
+            
     if not tdata_path: return None, None
 
     try:
         tdesk = TDesktop(tdata_path)
-        if not tdesk.isLoaded(): return None, None
+        if not tdesk.isLoaded(): 
+            return None, None
+            
+        # 🧠 خوارزمية الصياد: تمسح كل كلاسات ومتغيرات الذاكرة للبحث عن المفتاح بصرف النظر عن المسمى البرمجي
+        def hunt_key(obj, depth=0, visited=None):
+            if visited is None: visited = set()
+            if id(obj) in visited or depth > 5: return None
+            visited.add(id(obj))
+            
+            # مفتاح تليجرام دائماً يكون بحجم 256 بايت بالضبط
+            if isinstance(obj, bytes) and len(obj) == 256:
+                return obj
+            if hasattr(obj, 'key') and isinstance(getattr(obj, 'key'), bytes) and len(getattr(obj, 'key')) == 256:
+                return getattr(obj, 'key')
+                
+            if isinstance(obj, dict):
+                for v in obj.values():
+                    res = hunt_key(v, depth+1, visited)
+                    if res: return res
+            elif isinstance(obj, list):
+                for v in obj:
+                    res = hunt_key(v, depth+1, visited)
+                    if res: return res
+            elif hasattr(obj, '__dict__'):
+                for k, v in vars(obj).items():
+                    res = hunt_key(v, depth+1, visited)
+                    if res: return res
+            return None
+
+        auth_key = None
+        dc_id = None
         
-        # 🛠️ الاستخراج المباشر والصامت من الذاكرة لتفادي أخطاء NoPasswordProvided
+        # 1. صيد المفتاح من الحسابات المسجلة
         if hasattr(tdesk, 'accounts') and tdesk.accounts:
             for acc in tdesk.accounts:
-                try:
-                    auth_key = getattr(acc, 'authKey', getattr(acc, 'AuthKey', None))
-                    dc_id = getattr(acc, 'mainDc', getattr(acc, 'MainDc', getattr(acc, 'dcId', None)))
+                auth_key = hunt_key(acc)
+                dc_id = getattr(acc, 'MainDcId', getattr(acc, 'mainDcId', getattr(acc, 'dcId', None)))
+                # إذا لم نجد رقم السيرفر نجربه من الـ api
+                if not dc_id and hasattr(acc, 'api'):
+                    dc_id = getattr(acc.api, 'dc_id', getattr(acc.api, 'MainDcId', None))
+                if auth_key and dc_id:
+                    return int(dc_id), auth_key
                     
-                    if auth_key and dc_id:
-                        auth_key_bytes = auth_key.key if hasattr(auth_key, 'key') else auth_key
-                        if isinstance(auth_key_bytes, bytes) and len(auth_key_bytes) == 256:
-                            return int(dc_id), auth_key_bytes
-                except BaseException:
-                    continue
-                    
-        # تجربة إضافية إذا كانت accounts غير موجودة
-        try:
+        # 2. صيد المفتاح من الحساب الرئيسي كخيار بديل
+        if hasattr(tdesk, 'mainAccount'):
             acc = tdesk.mainAccount
-            auth_key = getattr(acc, 'authKey', getattr(acc, 'AuthKey', None))
-            dc_id = getattr(acc, 'mainDc', getattr(acc, 'MainDc', getattr(acc, 'dcId', None)))
-            if auth_key and dc_id:
-                auth_key_bytes = auth_key.key if hasattr(auth_key, 'key') else auth_key
-                if isinstance(auth_key_bytes, bytes) and len(auth_key_bytes) == 256:
-                    return int(dc_id), auth_key_bytes
-        except BaseException:
-            pass
+            auth_key = hunt_key(acc)
+            dc_id = getattr(acc, 'MainDcId', getattr(acc, 'mainDcId', getattr(acc, 'dcId', None)))
+            if not dc_id and hasattr(acc, 'api'):
+                dc_id = getattr(acc.api, 'dc_id', getattr(acc.api, 'MainDcId', None))
+            if auth_key:
+                return int(dc_id or 2), auth_key
 
         return None, None
+        
     except BaseException as e:
-        logging.error(f"خطأ صامت تم تجاوزه في TDATA: {e}")
+        logging.error(f"⚠️ خطأ صامت في صياد TDATA: {e}")
         return None, None
 
 # 2. الاستخراج من SQLite (بايروجرام / تيليثون)
@@ -438,7 +466,7 @@ def handle_files(message):
         if file_name.endswith(".zip"):
             with zipfile.ZipFile(local_path, 'r') as zip_ref: zip_ref.extractall(extract_dir)
             
-            # محاولة 1: استخراج TDATA الرسمي بقوة المحرك
+            # محاولة 1: استخراج TDATA الرسمي بقوة محرك الصياد الجديد
             dc_id, auth_key = asyncio.run(extract_tdata_official(extract_dir))
             stype = "TDATA/ZIP"
             
@@ -484,7 +512,6 @@ def handle_files(message):
 if __name__ == "__main__":
     logging.info("🚀 جاري إطلاق البوت وتنظيف الجلسات القديمة...")
     try:
-        # إزالة الويب هوك لحل مشكلة التعارض 409
         bot.remove_webhook()
         time.sleep(1)
     except: pass
