@@ -9,10 +9,38 @@ import asyncio
 import base64
 import struct
 import traceback
+import logging
+
+# =========================================================
+# 🚨 رادار الأخطاء (كاشف الأعطال الصامتة والمستقبلية) 🚨
+# =========================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+def radar_exception_handler(exctype, value, tb):
+    logging.critical("\n" + "="*50)
+    logging.critical("🚨 [رادار الأعطال] تم اكتشاف انهيار مخفي في البوت!")
+    logging.critical("السبب المباشر:")
+    logging.critical("".join(traceback.format_exception(exctype, value, tb)))
+    logging.critical("="*50 + "\n")
+
+# ربط الرادار بالبنية التحتية لبايثون
+sys.excepthook = radar_exception_handler
+
+# =========================================================
+# 🛠️ ترقيعة بايثون 3.14 (حل مشكلة الـ Event Loop)
+# =========================================================
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-# استدعاء بايروجرام وتيليثون فقط لعمليات (استخراج الجلسات والتحكم في حسابات الأرقام)
 from pyrogram import Client
 from pyrogram.enums import ChatType
 from pyrogram.errors import FloodWait, AuthKeyUnregistered, SessionRevoked
@@ -152,7 +180,7 @@ def reveal_accounts(call):
     markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجوع", callback_data="back_home"))
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
-# --- نظام جلب الكود (Telebot Next Step Handler) ---
+# --- نظام جلب الكود ---
 @bot.callback_query_handler(func=lambda call: call.data == "req_code")
 def request_code(call):
     msg = bot.send_message(call.message.chat.id, "**📥 أرسل رقم الحساب المراد جلب الكود له الآن:**\n\n*(مثال: +9647700000000)*", parse_mode="Markdown")
@@ -169,18 +197,22 @@ def process_code_request(message):
 
     status_msg = bot.send_message(message.chat.id, "⏳ جاري البحث عن الكود...")
     
-    code_found, err = asyncio.run(fetch_code_async(target_acc[5], user_id))
-    
-    if code_found:
-        flag, country = get_country_info(target_phone)
-        bot.edit_message_text(
-            f"🌎 **Country:** {flag} {country}\n📱 **Service:** 📱\n🔢 **Number:** `{target_phone}`\n🔑 **OTP:** `{code_found}`",
-            message.chat.id, status_msg.message_id, parse_mode="Markdown"
-        )
-    elif err:
-        bot.edit_message_text(f"❌ خطأ: {err}", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
-    else:
-        bot.edit_message_text("❌ لم أجد أي كود حالي في رسائل هذا الحساب.", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
+    try:
+        code_found, err = asyncio.run(fetch_code_async(target_acc[5], user_id))
+        
+        if code_found:
+            flag, country = get_country_info(target_phone)
+            bot.edit_message_text(
+                f"🌎 **Country:** {flag} {country}\n📱 **Service:** 📱\n🔢 **Number:** `{target_phone}`\n🔑 **OTP:** `{code_found}`",
+                message.chat.id, status_msg.message_id, parse_mode="Markdown"
+            )
+        elif err:
+            bot.edit_message_text(f"❌ خطأ: {err}", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
+        else:
+            bot.edit_message_text("❌ لم أجد أي كود حالي في رسائل هذا الحساب.", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
+    except Exception as e:
+        logging.error(f"Error fetching code: {e}")
+        bot.edit_message_text("❌ تعذر جلب الكود حالياً بسبب خطأ داخلي.", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
 
 async def fetch_code_async(pyro_session, user_id):
     exec_client = Client(f"code_{user_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
@@ -198,7 +230,7 @@ async def fetch_code_async(pyro_session, user_id):
     except Exception as e:
         return None, str(e)
 
-# --- قوائم الإجراءات (تنظيف، خروج، إنهاء) ---
+# --- قوائم الإجراءات ---
 @bot.callback_query_handler(func=lambda call: re.match(r"^menu_(terminate|clean|logout)$", call.data))
 def action_menus(call):
     action = call.data.split("_")[1]
@@ -270,7 +302,7 @@ async def perform_action_async(action, acc_id, owner_id):
         if exec_client.is_connected: await exec_client.disconnect()
     return result_msg
 
-# --- استخراج الحسابات (يتم عبر بايثون النقي دون الحاجة لاطار البوت) ---
+# --- استخراج الحسابات ---
 def get_dc_ip(dc_id):
     ips = {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}
     return ips.get(dc_id, "149.154.167.51")
@@ -330,7 +362,7 @@ async def verify_and_save_async(owner_id, dc_id, auth_key, stype):
     save_account(owner_id, phone, me.id, first_name, pyro_session, tl_session, stype, stars)
     return phone, first_name, stars
 
-# --- استقبال الملفات (واجهة Telebot) ---
+# --- استقبال الملفات ---
 @bot.message_handler(content_types=['document'])
 def handle_files(message):
     file_name = message.document.file_name
@@ -384,7 +416,14 @@ def handle_files(message):
     finally:
         shutil.rmtree(extract_dir, ignore_errors=True)
 
-# تشغيل البوت باستمرار (Telebot Polling)
+# =========================================================
+# 🚀 تشغيل البوت مع التخطي والمقاومة
+# =========================================================
 if __name__ == "__main__":
-    print("Telebot is Running...🚀")
-    bot.infinity_polling()
+    logging.info("🚀 جاري إطلاق البوت وتشغيل الرادار...")
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=10, long_polling_timeout=5)
+        except Exception as e:
+            logging.error(f"⚠️ تم قطع الاتصال: {e} .. إعادة المحاولة خلال 3 ثواني")
+            time.sleep(3)
