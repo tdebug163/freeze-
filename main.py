@@ -59,7 +59,7 @@ except BaseException as e:
 # --- المتغيرات ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "8971197244:AAEBSUdjMuKWs7U1qHfU042gGFYhbkn5HVU"  # تم دمج توكنك بنجاح ✅
+BOT_TOKEN = "8971197244:AAHRk4mTQ1ifMQ_lpIkA5ncQF2S2y6yWiwU"  # تم دمج توكنك بنجاح ✅
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
