@@ -48,7 +48,6 @@ from telethon.crypto import AuthKey
 # المكتبة المتخصصة لفك تشفير TDATA
 try:
     from opentele.td import TDesktop
-    from opentele.tl import TelegramClient as OpenteleClient
     OPENTELE_AVAILABLE = True
 except ImportError:
     OPENTELE_AVAILABLE = False
@@ -60,7 +59,7 @@ except Exception as e:
 # --- المتغيرات ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "8971197244:AAEBSUdjMuKWs7U1qHfU042gGFYhbkn5HVU"  # تم دمج توكنك بنجاح ✅
+BOT_TOKEN = "8971197244:AAHRk4mTQ1ifMQ_lpIkA5ncQF2S2y6yWiwU"  # ⚠️ ضروري تسوي Revoke من BotFather وتجيب توكن جديد وتحطه هنا
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -178,7 +177,7 @@ def add_account_prompt(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "reveal_accounts")
 def reveal_accounts(call):
-    accounts = get_all_accounts(call.from_user.id)
+    accounts = get_all_accounts(call.fromuser.id)
     if not accounts: return bot.answer_callback_query(call.id, "لا توجد حسابات!", show_alert=True)
     text = "**🕵️ الحسابات المسجلة لديك:**\n\n"
     for acc_id, phone, name, stars in accounts: text += f"👤 الاسم: `{name}` | 📱 `{phone}` | ⭐ `{stars}`\n"
@@ -315,7 +314,7 @@ def generate_sessions(api_id, dc_id, auth_key_bytes):
     session._dc_id, session._server_address, session.port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
     return pyro_session, session.save()
 
-# 1. الاستخراج من TDATA الرسمي (الحل الخارق بدون Client)
+# 1. الاستخراج من TDATA الرسمي (الحل النهائي المباشر بدون Client)
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None
     tdata_path = None
@@ -329,7 +328,7 @@ async def extract_tdata_official(base_dir):
         tdesk = TDesktop(tdata_path)
         if not tdesk.isLoaded(): return None, None
         
-        # 🛠️ الحل الجذري والعبقري: الاستخراج المباشر من الذاكرة لتفادي أي خطأ في مكتبة Client
+        # 🛠️ محاولة 1: استخراج مباشر من الذاكرة 
         try:
             acc = tdesk.mainAccount
             auth_key = getattr(acc, 'AuthKey', getattr(acc, 'authKey', None))
@@ -341,9 +340,9 @@ async def extract_tdata_official(base_dir):
                 if isinstance(auth_key, bytes) and len(auth_key) == 256:
                     return dc_id, auth_key
         except Exception as direct_e:
-            logging.debug(f"Direct extraction failed: {direct_e}")
+            pass
 
-        # 🛠️ طريقة احتياطية: قمنا بإزالة كلمة client التي كانت تسبب الخطأ
+        # 🛠️ محاولة 2: عبر تيليثون مباشرة (معدلة بدون الكلمة المسببة للخطأ)
         tl_client = await tdesk.ToTelethon(session="memory", api_id=API_ID, api_hash=API_HASH)
         await tl_client.connect()
         dc_id = tl_client.session.dc_id
@@ -396,7 +395,6 @@ async def verify_and_save_async(owner_id, dc_id, auth_key, stype):
     me = await client.get_me()
     phone, first_name = me.phone_number or "Unknown", me.first_name or "User"
     
-    # 🛡️ حماية النجوم
     try:
         from pyrogram.raw.functions.payments import GetStarsStatus
         res = await client.invoke(GetStarsStatus(peer=await client.resolve_peer("me")))
@@ -433,16 +431,13 @@ def handle_files(message):
         if file_name.endswith(".zip"):
             with zipfile.ZipFile(local_path, 'r') as zip_ref: zip_ref.extractall(extract_dir)
             
-            # محاولة 1: استخراج TDATA الرسمي بقوة المحرك
             dc_id, auth_key = asyncio.run(extract_tdata_official(extract_dir))
             stype = "TDATA/ZIP"
             
-            # محاولة 2: إذا لم يكن TDATA رسمي، ابحث عن SQLite
             if not dc_id:
                 dc_id, auth_key = extract_auth_sqlite(extract_dir)
                 stype = "Session/ZIP"
                 
-            # محاولة 3: استخراج من نصوص داخل الـ ZIP
             if not dc_id:
                 dc_id, auth_key = extract_string_from_txt(extract_dir)
                 stype = "TXT/ZIP"
@@ -477,7 +472,12 @@ def handle_files(message):
 # 🚀 تشغيل البوت مع التخطي والمقاومة
 # =========================================================
 if __name__ == "__main__":
-    logging.info("🚀 جاري إطلاق البوت وتشغيل الرادار...")
+    logging.info("🚀 جاري إطلاق البوت وتنظيف الجلسات القديمة...")
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+    except: pass
+    
     while True:
         try:
             bot.infinity_polling(skip_pending=True, timeout=10, long_polling_timeout=5)
