@@ -59,7 +59,7 @@ except BaseException as e:
 # --- المتغيرات ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "8971197244:AAF4AljIj-MfALbVKzGhsC-nj_O9kKFExwg"  
+BOT_TOKEN = "8971197244:AAHRk4mTQ1ifMQ_lpIkA5ncQF2S2y6yWiwU"  
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -114,7 +114,7 @@ init_db()
 # --- دوال الأعلام ---
 COUNTRY_FLAGS = {
     "+964": ("🇮🇶", "العراق"), "+966": ("🇸🇦", "السعودية"), "+971": ("🇦🇪", "الإمارات"),
-    "+965": ("🇰🇼", "الكويت"), "+974": ("🇶🇦", "قطر"), "+973": ("🇧罕", "البحرين"), 
+    "+965": ("🇰🇼", "الكويت"), "+974": ("🇶🇦", "قطر"), "+973": ("🇧🇭", "البحرين"), 
     "+968": ("🇴🇲", "عُمان"), "+20": ("🇪🇬", "مصر"), "+212": ("🇲🇦", "المغرب"), 
     "+213": ("🇩🇿", "الجزائر"), "+216": ("🇹🇳", "تونس"), "+218": ("🇱🇾", "ليبيا"), 
     "+249": ("🇸🇩", "السودان"), "+967": ("🇾🇪", "اليمن"), "+962": ("🇯🇴", "الأردن"), 
@@ -300,18 +300,17 @@ async def perform_action_async(action, acc_id, owner_id):
         if exec_client.is_connected: await exec_client.disconnect()
     return result_msg
 
-
-
-     def get_dc_ip(dc_id):
+# =========================================================
+# ⚙️ محرك استخراج الجلسات (خوارزمية الصياد العميق لـ TDATA)
+# =========================================================
+def get_dc_ip(dc_id):
     ips = {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}
     return ips.get(dc_id, "149.154.167.51")
 
 def generate_sessions(api_id, dc_id, auth_key_bytes):
-    # 1. بناء جلسة Pyrogram
     pyro_packed = struct.pack(">B?256sQ", dc_id, False, auth_key_bytes, 9999)
     pyro_session = base64.urlsafe_b64encode(pyro_packed).decode("utf-8").rstrip("=")
     
-    # 2. بناء جلسة Telethon مع التعديل الجديد لمنع خطأ الـ port
     session = StringSession()
     session._dc_id = dc_id
     session._server_address = get_dc_ip(dc_id)
@@ -320,10 +319,10 @@ def generate_sessions(api_id, dc_id, auth_key_bytes):
     
     return pyro_session, session.save()
 
+# 1. الاستخراج من TDATA الرسمي (خوارزمية الصياد العميق 256-Byte)
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None
     
-    # 🛠️ البحث الذكي عن مسار TDATA الحقيقي داخل المجلد
     tdata_path = None
     for root, dirs, files in os.walk(base_dir):
         if 'key_datas' in files or any(len(d) == 16 for d in dirs):
@@ -337,13 +336,11 @@ async def extract_tdata_official(base_dir):
         if not tdesk.isLoaded(): 
             return None, None
             
-        # 🧠 خوارزمية الصياد: تمسح كل كلاسات ومتغيرات الذاكرة للبحث عن المفتاح بصرف النظر عن المسمى البرمجي
         def hunt_key(obj, depth=0, visited=None):
             if visited is None: visited = set()
             if id(obj) in visited or depth > 5: return None
             visited.add(id(obj))
             
-            # مفتاح تليجرام دائماً يكون بحجم 256 بايت بالضبط
             if isinstance(obj, bytes) and len(obj) == 256:
                 return obj
             if hasattr(obj, 'key') and isinstance(getattr(obj, 'key'), bytes) and len(getattr(obj, 'key')) == 256:
@@ -366,18 +363,15 @@ async def extract_tdata_official(base_dir):
         auth_key = None
         dc_id = None
         
-        # 1. صيد المفتاح من الحسابات المسجلة
         if hasattr(tdesk, 'accounts') and tdesk.accounts:
             for acc in tdesk.accounts:
                 auth_key = hunt_key(acc)
                 dc_id = getattr(acc, 'MainDcId', getattr(acc, 'mainDcId', getattr(acc, 'dcId', None)))
-                # إذا لم نجد رقم السيرفر نجربه من الـ api
                 if not dc_id and hasattr(acc, 'api'):
                     dc_id = getattr(acc.api, 'dc_id', getattr(acc.api, 'MainDcId', None))
                 if auth_key and dc_id:
                     return int(dc_id), auth_key
                     
-        # 2. صيد المفتاح من الحساب الرئيسي كخيار بديل
         if hasattr(tdesk, 'mainAccount'):
             acc = tdesk.mainAccount
             auth_key = hunt_key(acc)
@@ -471,16 +465,13 @@ def handle_files(message):
         if file_name.endswith(".zip"):
             with zipfile.ZipFile(local_path, 'r') as zip_ref: zip_ref.extractall(extract_dir)
             
-            # محاولة 1: استخراج TDATA الرسمي بقوة محرك الصياد الجديد
             dc_id, auth_key = asyncio.run(extract_tdata_official(extract_dir))
             stype = "TDATA/ZIP"
             
-            # محاولة 2: إذا لم يكن TDATA رسمي، ابحث عن SQLite
             if not dc_id:
                 dc_id, auth_key = extract_auth_sqlite(extract_dir)
                 stype = "Session/ZIP"
                 
-            # محاولة 3: استخراج من نصوص داخل الـ ZIP
             if not dc_id:
                 dc_id, auth_key = extract_string_from_txt(extract_dir)
                 stype = "TXT/ZIP"
