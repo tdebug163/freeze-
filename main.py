@@ -59,7 +59,7 @@ except BaseException as e:
 # --- المتغيرات ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "8971197244:AAERC52jstY0Y67OkudP4lU0CQRVBQtcjBE"  
+BOT_TOKEN = "8971197244:AAHfJs89Gc2MiXOK2WBCrUl3oE63vdX9Rkk"  
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -114,7 +114,7 @@ init_db()
 # --- دوال الأعلام ---
 COUNTRY_FLAGS = {
     "+964": ("🇮🇶", "العراق"), "+966": ("🇸🇦", "السعودية"), "+971": ("🇦🇪", "الإمارات"),
-    "+965": ("🇰🇼", "الكويت"), "+974": ("🇶🇦", "قطر"), "+973": ("🇧🇭", "البحرين"), 
+    "+965": ("🇰🇼", "الكويت"), "+974": ("🇶🇦", "قطر"), "+973": ("🇧罕", "البحرين"), 
     "+968": ("🇴🇲", "عُمان"), "+20": ("🇪🇬", "مصر"), "+212": ("🇲🇦", "المغرب"), 
     "+213": ("🇩🇿", "الجزائر"), "+216": ("🇹🇳", "تونس"), "+218": ("🇱🇾", "ليبيا"), 
     "+249": ("🇸🇩", "السودان"), "+967": ("🇾🇪", "اليمن"), "+962": ("🇯🇴", "الأردن"), 
@@ -319,23 +319,33 @@ def generate_sessions(api_id, dc_id, auth_key_bytes):
     
     return pyro_session, session.save()
 
-# 1. الاستخراج من TDATA الرسمي (خوارزمية الصياد العميق 256-Byte)
+# 1. الاستخراج من TDATA الرسمي (النسخة المرنة والمقاومة لتغير مسارات الـ ZIP)
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None
     
     tdata_path = None
+    # البحث العميق عن المجلد الذي يحتوي على ملف key_datas الفعلي
     for root, dirs, files in os.walk(base_dir):
-        if 'key_datas' in files or any(len(d) == 16 for d in dirs):
+        if 'key_datas' in files:
             tdata_path = root
             break
+            
+    # إذا لم نجد key_datas، نجرّب البحث عن مجلد الخريطة الرقمية (16 حرف) أو ملف maps
+    if not tdata_path:
+        for root, dirs, files in os.walk(base_dir):
+            if any(len(d) == 16 for d in dirs) or 'maps' in files:
+                tdata_path = root
+                break
             
     if not tdata_path: return None, None
 
     try:
+        # تشغيل المحرك على المسار الصحيح المكتشف ديناميكياً
         tdesk = TDesktop(tdata_path)
         if not tdesk.isLoaded(): 
             return None, None
             
+        # 🧠 خوارزمية الصياد: تمسح كلاسات الذاكرة لاصطياد الـ Auth Key
         def hunt_key(obj, depth=0, visited=None):
             if visited is None: visited = set()
             if id(obj) in visited or depth > 5: return None
@@ -363,6 +373,7 @@ async def extract_tdata_official(base_dir):
         auth_key = None
         dc_id = None
         
+        # 1. صيد المفتاح من الحسابات المسجلة
         if hasattr(tdesk, 'accounts') and tdesk.accounts:
             for acc in tdesk.accounts:
                 auth_key = hunt_key(acc)
@@ -372,6 +383,7 @@ async def extract_tdata_official(base_dir):
                 if auth_key and dc_id:
                     return int(dc_id), auth_key
                     
+        # 2. صيد المفتاح من الحساب الرئيسي كخيار بديل
         if hasattr(tdesk, 'mainAccount'):
             acc = tdesk.mainAccount
             auth_key = hunt_key(acc)
@@ -406,20 +418,37 @@ def extract_auth_sqlite(directory):
             except: continue
     return None, None
 
-# 3. الاستخراج من TXT (نصوص Base64)
+# 3. الاستخراج من TXT (نصوص Base64 المحدثة والمحمية)
 def extract_string_from_txt(dir_path):
     for root, _, files in os.walk(dir_path):
         for file in files:
             if file.endswith(".txt"):
-                with open(os.path.join(root, file), 'r') as f: content = f.read().strip()
                 try:
-                    data = base64.urlsafe_b64decode(content + "=" * (-len(content) % 4))
-                    if len(data) == 261: return struct.unpack(">B", data[0:1])[0], data[5:261]
-                except: pass
-                try:
-                    sess = StringSession(content)
-                    if sess._dc_id and sess._auth_key: return sess._dc_id, sess._auth_key.key
-                except: pass
+                    with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f: 
+                        content = f.read().strip()
+                    
+                    if not content: continue
+                    
+                    # محاولة فك التشفير الذكي والآمن لـ Pyrogram Session String
+                    try:
+                        padded_content = content + "=" * (-len(content) % 4)
+                        data = base64.urlsafe_b64decode(padded_content)
+                        
+                        if len(data) >= 5:
+                            dc_id = struct.unpack(">B", data[0:1])[0]
+                            if 1 <= dc_id <= 5:
+                                auth_key = data[5:261] if len(data) >= 261 else data[-256:]
+                                if len(auth_key) == 256:
+                                    return dc_id, auth_key
+                    except: pass
+                    
+                    # محاولة 2: إذا كانت الجلسة تخص Telethon StringSession
+                    try:
+                        sess = StringSession(content)
+                        if sess._dc_id and sess._auth_key: 
+                            return sess._dc_id, sess._auth_key.key
+                    except: pass
+                except: continue
     return None, None
 
 async def verify_and_save_async(owner_id, dc_id, auth_key, stype):
