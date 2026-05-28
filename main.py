@@ -56,15 +56,15 @@ except BaseException as e:
     OPENTELE_AVAILABLE = False
     logging.warning(f"⚠️ خطأ في تحميل مكتبة opentele: {e}")
 
-# --- المتغيرات ---
+# --- المتغيرات الأساسية ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "8971197244:AAHfJs89Gc2MiXOK2WBCrUl3oE63vdX9Rkk"  
+BOT_TOKEN = "8960187108:AAHtuomJLjPxlthPdLd1oTdCiZxeUVYqP8I"  
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # =========================================================
-# 🗄️ إدارة قواعد البيانات (حماية ضد تداخل المعالجات Thread Safety)
+# 🗄️ إدارة قواعد البيانات
 # =========================================================
 def get_db_conn():
     return sqlite3.connect('accounts.db', check_same_thread=False, timeout=20)
@@ -111,10 +111,10 @@ def delete_account(acc_id):
 
 init_db()
 
-# --- دوال الأعلام ---
+# --- دوال الأعلام والبلدان ---
 COUNTRY_FLAGS = {
     "+964": ("🇮🇶", "العراق"), "+966": ("🇸🇦", "السعودية"), "+971": ("🇦🇪", "الإمارات"),
-    "+965": ("🇰🇼", "الكويت"), "+974": ("🇶🇦", "قطر"), "+973": ("🇧罕", "البحرين"), 
+    "+965": ("🇰🇼", "الكويت"), "+974": ("🇶🇦", "قطر"), "+973": ("🇧🇭", "البحرين"), 
     "+968": ("🇴🇲", "عُمان"), "+20": ("🇪🇬", "مصر"), "+212": ("🇲🇦", "المغرب"), 
     "+213": ("🇩🇿", "الجزائر"), "+216": ("🇹🇳", "تونس"), "+218": ("🇱🇾", "ليبيا"), 
     "+249": ("🇸🇩", "السودان"), "+967": ("🇾🇪", "اليمن"), "+962": ("🇯🇴", "الأردن"), 
@@ -128,7 +128,7 @@ def get_country_info(phone):
             return flag, name
     return "🏳️", "غير معروف"
 
-# --- واجهة الأزرار ---
+# --- واجهات التحكم بالبوت ---
 def home_keyboard():
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("✉️ فحص الأكواد", callback_data="req_code"),
@@ -148,15 +148,13 @@ def accounts_action_keyboard(owner_id, action):
     markup.row(InlineKeyboardButton("🔙 رجوع", callback_data="back_home"))
     return markup
 
-# --- أوامر البوت الأساسية ---
+# --- الأوامر والردود ---
 @bot.message_handler(commands=['start'])
 def start_message(message):
     bot.reply_to(
         message,
         "**🤖 أهلاً بك في بوت إدارة الحسابات الاحترافي!**\n\n"
-        "يدعم إضافة الحسابات عبر (ZIP - TDATA - Session).\n"
-        "يمكنك إرسال عدة ملفات دفعة واحدة وسيتم إضافتها جميعاً.\n\n"
-        "**حساباتك في أمان تام.**",
+        "قم بإرسال ملف الـ TDATA (مضغوط بصيغة ZIP) وسيتم استخراج الحساب وفحصه فوراً.",
         reply_markup=home_keyboard(),
         parse_mode="Markdown"
     )
@@ -169,9 +167,8 @@ def back_home(call):
 def add_account_prompt(call):
     markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجوع", callback_data="back_home"))
     bot.edit_message_text(
-        "**📤 إرسال النسخة المُلصقة!**\n\n"
-        "أرسل ملفات الـ ZIP أو الـ Session الآن:\n"
-        "🔹 إذا كان TDATA: المجلد `D877F783D5D3EF8C` والملفات `key_datas` يجب أن تكون داخل الـ ZIP.",
+        "**📤 إرسال ملف الـ TDATA المضغوط!**\n\n"
+        "أرسل ملف الـ ZIP المحتوي على الـ TDATA الآن وسيتم صيده تلقائياً.",
         call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown"
     )
 
@@ -215,11 +212,9 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
                     if match:
                         found_codes.append((phone, match.group(1)))
                         break  
-        except:
-            pass  
+        except: pass  
         finally:
-            if exec_client.is_connected:
-                await exec_client.disconnect()
+            if exec_client.is_connected: await exec_client.disconnect()
 
     if found_codes:
         text = "**✅ تم العثور على أكواد الدخول التالية:**\n\n"
@@ -230,14 +225,14 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
     else:
         bot.edit_message_text("❌ لم يتم العثور على أي أكواد في جميع الحسابات.", chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard())
 
-# --- قوائم الإجراءات ---
+# --- قوائم التنفيذ والإجراءات السريعة ---
 @bot.callback_query_handler(func=lambda call: re.match(r"^menu_(terminate|clean|logout)$", call.data))
 def action_menus(call):
     action = call.data.split("_")[1]
     titles = {
         "terminate": "💀 **إنهاء الجلسات الأخرى:**\nاختر حساباً لحذف جميع جلساته:",
-        "clean": "🧹 **التنظيف الشامل:**\nاختر حساباً لحذف جميع المحادثات:",
-        "logout": "🚪 **تسجيل الخروج:**\nاختر حساباً لتسجيل خروجه:"
+        "clean": "🧹 **التنظيف الشامل:**\nاختر حساباً لحذف جميع المحادثات والجروبات:",
+        "logout": "🚪 **تسجيل الخروج:**\nاختر حساباً لتسجيل خروجه نهائياً:"
     }
     bot.edit_message_text(titles[action], call.message.chat.id, call.message.message_id, reply_markup=accounts_action_keyboard(call.from_user.id, action), parse_mode="Markdown")
 
@@ -265,7 +260,7 @@ async def perform_action_async(action, acc_id, owner_id):
         await exec_client.connect()
     except (AuthKeyUnregistered, SessionRevoked):
         delete_account(acc_id)
-        return f"❌ الحساب `{phone}` محظور وتم حذفه."
+        return f"❌ الحساب `{phone}` محظور وتالف، تم حذفه تلقائياً."
     except: return f"❌ فشل الاتصال بـ `{phone}`."
 
     result_msg = ""
@@ -294,14 +289,14 @@ async def perform_action_async(action, acc_id, owner_id):
         elif action == "logout":
             await exec_client.log_out()
             delete_account(acc_id)
-            result_msg = f"🚪 **تم تسجيل خروج البوت من** `{phone}`."
+            result_msg = f"🚪 **تم تسجيل الخروج وحذف البيانات لـ** `{phone}`."
     except Exception as e: result_msg = f"❌ خطأ: {type(e).__name__}"
     finally:
         if exec_client.is_connected: await exec_client.disconnect()
     return result_msg
 
 # =========================================================
-# ⚙️ محرك استخراج الجلسات (خوارزمية الصياد العميق لـ TDATA)
+# ⚙️ محرك الـ TDATA الاحترافي الصافي (صياد الـ Auth Key)
 # =========================================================
 def get_dc_ip(dc_id):
     ips = {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}
@@ -319,40 +314,30 @@ def generate_sessions(api_id, dc_id, auth_key_bytes):
     
     return pyro_session, session.save()
 
-# 1. الاستخراج من TDATA الرسمي (النسخة المرنة والمقاومة لتغير مسارات الـ ZIP)
+# دالة الاستخراج الاحترافية والوحيدة للـ TDATA
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None
     
     tdata_path = None
-    # البحث العميق عن المجلد الذي يحتوي على ملف key_datas الفعلي
+    # الغوص في المجلدات والبحث الشامل والمباشر عن ملف الـ key_datas
     for root, dirs, files in os.walk(base_dir):
         if 'key_datas' in files:
             tdata_path = root
             break
             
-    # إذا لم نجد key_datas، نجرّب البحث عن مجلد الخريطة الرقمية (16 حرف) أو ملف maps
-    if not tdata_path:
-        for root, dirs, files in os.walk(base_dir):
-            if any(len(d) == 16 for d in dirs) or 'maps' in files:
-                tdata_path = root
-                break
-            
     if not tdata_path: return None, None
 
     try:
-        # تشغيل المحرك على المسار الصحيح المكتشف ديناميكياً
         tdesk = TDesktop(tdata_path)
-        if not tdesk.isLoaded(): 
-            return None, None
+        if not tdesk.isLoaded(): return None, None
             
-        # 🧠 خوارزمية الصياد: تمسح كلاسات الذاكرة لاصطياد الـ Auth Key
+        # خوارزمية الصياد لفحص كتل الذاكرة بحثاً عن الـ 256 بايت للمفتاح
         def hunt_key(obj, depth=0, visited=None):
             if visited is None: visited = set()
             if id(obj) in visited or depth > 5: return None
             visited.add(id(obj))
             
-            if isinstance(obj, bytes) and len(obj) == 256:
-                return obj
+            if isinstance(obj, bytes) and len(obj) == 256: return obj
             if hasattr(obj, 'key') and isinstance(getattr(obj, 'key'), bytes) and len(getattr(obj, 'key')) == 256:
                 return getattr(obj, 'key')
                 
@@ -370,86 +355,26 @@ async def extract_tdata_official(base_dir):
                     if res: return res
             return None
 
-        auth_key = None
-        dc_id = None
+        auth_key, dc_id = None, None
         
-        # 1. صيد المفتاح من الحسابات المسجلة
         if hasattr(tdesk, 'accounts') and tdesk.accounts:
             for acc in tdesk.accounts:
                 auth_key = hunt_key(acc)
                 dc_id = getattr(acc, 'MainDcId', getattr(acc, 'mainDcId', getattr(acc, 'dcId', None)))
                 if not dc_id and hasattr(acc, 'api'):
                     dc_id = getattr(acc.api, 'dc_id', getattr(acc.api, 'MainDcId', None))
-                if auth_key and dc_id:
-                    return int(dc_id), auth_key
+                if auth_key and dc_id: return int(dc_id), auth_key
                     
-        # 2. صيد المفتاح من الحساب الرئيسي كخيار بديل
         if hasattr(tdesk, 'mainAccount'):
             acc = tdesk.mainAccount
             auth_key = hunt_key(acc)
             dc_id = getattr(acc, 'MainDcId', getattr(acc, 'mainDcId', getattr(acc, 'dcId', None)))
             if not dc_id and hasattr(acc, 'api'):
                 dc_id = getattr(acc.api, 'dc_id', getattr(acc.api, 'MainDcId', None))
-            if auth_key:
-                return int(dc_id or 2), auth_key
+            if auth_key: return int(dc_id or 2), auth_key
 
         return None, None
-        
-    except BaseException as e:
-        logging.error(f"⚠️ خطأ صامت في صياد TDATA: {e}")
-        return None, None
-
-# 2. الاستخراج من SQLite (بايروجرام / تيليثون)
-def extract_auth_sqlite(directory):
-    for root, _, files in os.walk(directory):
-        for file in files:
-            try:
-                conn = sqlite3.connect(os.path.join(root, file))
-                c = conn.cursor()
-                c.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                tables = [r[0] for r in c.fetchall()]
-                if 'dc' in tables:
-                    row = c.execute("SELECT dc_id, auth_key FROM dc WHERE length(auth_key) = 256 LIMIT 1").fetchone()
-                    if row: conn.close(); return row[0], row[1]
-                if 'sessions' in tables:
-                    row = c.execute("SELECT dc_id, auth_key FROM sessions WHERE length(auth_key) = 256 LIMIT 1").fetchone()
-                    if row: conn.close(); return row[0], row[1]
-                conn.close()
-            except: continue
-    return None, None
-
-# 3. الاستخراج من TXT (نصوص Base64 المحدثة والمحمية)
-def extract_string_from_txt(dir_path):
-    for root, _, files in os.walk(dir_path):
-        for file in files:
-            if file.endswith(".txt"):
-                try:
-                    with open(os.path.join(root, file), 'r', encoding='utf-8', errors='ignore') as f: 
-                        content = f.read().strip()
-                    
-                    if not content: continue
-                    
-                    # محاولة فك التشفير الذكي والآمن لـ Pyrogram Session String
-                    try:
-                        padded_content = content + "=" * (-len(content) % 4)
-                        data = base64.urlsafe_b64decode(padded_content)
-                        
-                        if len(data) >= 5:
-                            dc_id = struct.unpack(">B", data[0:1])[0]
-                            if 1 <= dc_id <= 5:
-                                auth_key = data[5:261] if len(data) >= 261 else data[-256:]
-                                if len(auth_key) == 256:
-                                    return dc_id, auth_key
-                    except: pass
-                    
-                    # محاولة 2: إذا كانت الجلسة تخص Telethon StringSession
-                    try:
-                        sess = StringSession(content)
-                        if sess._dc_id and sess._auth_key: 
-                            return sess._dc_id, sess._auth_key.key
-                    except: pass
-                except: continue
-    return None, None
+    except: return None, None
 
 async def verify_and_save_async(owner_id, dc_id, auth_key, stype):
     pyro_session, tl_session = generate_sessions(API_ID, dc_id, auth_key)
@@ -462,22 +387,21 @@ async def verify_and_save_async(owner_id, dc_id, auth_key, stype):
         from pyrogram.raw.functions.payments import GetStarsStatus
         res = await client.invoke(GetStarsStatus(peer=await client.resolve_peer("me")))
         stars = getattr(res, "balance", 0)
-    except Exception:
-        stars = 0
+    except: stars = 0
         
     await client.disconnect()
     save_account(owner_id, phone, me.id, first_name, pyro_session, tl_session, stype, stars)
     return phone, first_name, stars
 
 # =========================================================
-# 📥 استقبال الملفات (شامل التحديثات ومضاد الأخطاء)
+# 📥 دالة استقبال الملفات الوحيدة والذكية
 # =========================================================
 @bot.message_handler(content_types=['document'])
 def handle_files(message):
     file_name = message.document.file_name
-    if not file_name.endswith((".zip", ".session", ".txt")): return
+    if not file_name.endswith(".zip"): return
     
-    status_msg = bot.reply_to(message, "⏳ جاري المعالجة والبحث العميق...")
+    status_msg = bot.reply_to(message, "⏳ جاري فحص ملف الـ TDATA فحصاً عميقاً...")
     
     file_info = bot.get_file(message.document.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
@@ -491,48 +415,28 @@ def handle_files(message):
 
     results = []
     try:
-        if file_name.endswith(".zip"):
-            with zipfile.ZipFile(local_path, 'r') as zip_ref: zip_ref.extractall(extract_dir)
-            
-            dc_id, auth_key = asyncio.run(extract_tdata_official(extract_dir))
-            stype = "TDATA/ZIP"
-            
-            if not dc_id:
-                dc_id, auth_key = extract_auth_sqlite(extract_dir)
-                stype = "Session/ZIP"
-                
-            if not dc_id:
-                dc_id, auth_key = extract_string_from_txt(extract_dir)
-                stype = "TXT/ZIP"
-
-            if dc_id and auth_key:
-                p, n, s = asyncio.run(verify_and_save_async(message.from_user.id, dc_id, auth_key, stype))
-                results.append(f"✅ {p} ({n}) ⭐ {s}")
-
-        elif file_name.endswith(".session"):
-            dc_id, auth_key = extract_auth_sqlite(extract_dir)
-            if dc_id:
-                p, n, s = asyncio.run(verify_and_save_async(message.from_user.id, dc_id, auth_key, "Session File"))
-                results.append(f"✅ {p} ({n}) ⭐ {s}")
-
-        elif file_name.endswith(".txt"):
-            dc_id, auth_key = extract_string_from_txt(extract_dir)
-            if dc_id:
-                p, n, s = asyncio.run(verify_and_save_async(message.from_user.id, dc_id, auth_key, "TXT File"))
-                results.append(f"✅ {p} ({n}) ⭐ {s}")
+        with zipfile.ZipFile(local_path, 'r') as zip_ref: 
+            zip_ref.extractall(extract_dir)
+        
+        # استدعاء الدالة الاحترافية للـ TDATA مباشرة
+        dc_id, auth_key = asyncio.run(extract_tdata_official(extract_dir))
+        
+        if dc_id and auth_key:
+            p, n, s = asyncio.run(verify_and_save_async(message.from_user.id, dc_id, auth_key, "TDATA Account"))
+            results.append(f"✅ {p} ({n}) ⭐ {s}")
 
         if results:
-            bot.edit_message_text("**تمت الإضافة بنجاح:**\n\n" + "\n".join(results), message.chat.id, status_msg.message_id, reply_markup=home_keyboard(), parse_mode="Markdown")
+            bot.edit_message_text("**تمت إضافة حساب الـ TDATA بنجاح:**\n\n" + "\n".join(results), message.chat.id, status_msg.message_id, reply_markup=home_keyboard(), parse_mode="Markdown")
         else:
-            bot.edit_message_text("❌ فشل استخراج بيانات صالحة. تأكد أن الملف يحتوي على بيانات حساب حقيقية.", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
+            bot.edit_message_text("❌ لم يتم العثور على ملفات TDATA صالحة داخل الـ ZIP. تأكد من وجود مجلد الـ TDATA السليم.", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
     except Exception as e:
-        bot.edit_message_text(f"❌ خطأ غير متوقع: {type(e).__name__}", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
-        logging.error(f"Error handling file: {e}")
+        bot.edit_message_text("❌ حدث خطأ أثناء معالجة الملف المضغوط.", message.chat.id, status_msg.message_id, reply_markup=home_keyboard())
+        logging.error(f"Error: {e}")
     finally:
         shutil.rmtree(extract_dir, ignore_errors=True)
 
 # =========================================================
-# 🚀 تشغيل البوت مع التخطي والمقاومة
+# 🚀 تشغيل البوت المباشر
 # =========================================================
 if __name__ == "__main__":
     logging.info("🚀 جاري إطلاق البوت وتنظيف الجلسات القديمة...")
@@ -545,5 +449,5 @@ if __name__ == "__main__":
         try:
             bot.infinity_polling(skip_pending=True, timeout=10, long_polling_timeout=5)
         except Exception as e:
-            logging.error(f"⚠️ تم قطع الاتصال: {e} .. إعادة المحاولة خلال 3 ثواني")
+            logging.error(f"⚠️ انقطع الاتصال: {e} .. إعادة التشغيل التلقائي بعد 3 ثواني")
             time.sleep(3)
