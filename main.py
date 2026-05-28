@@ -57,7 +57,7 @@ except ImportError:
 # --- المتغيرات ---
 API_ID = 28797361  
 API_HASH = "771041b32e83ab232e066b7adeee700b"  
-BOT_TOKEN = "ضع_التوكن_الجديد_هنا"  # ⚠️ ضع التوكن هنا
+BOT_TOKEN = "8971197244:AAEBSUdjMuKWs7U1qHfU042gGFYhbkn5HVU"  # ⚠️ ضع التوكن هنا
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
