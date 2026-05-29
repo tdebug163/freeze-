@@ -864,6 +864,10 @@ def process_successful_login(message, status_msg, me, pyro_session, session_type
     )
     bot.edit_message_text(text, message.chat.id, status_msg.message_id, reply_markup=home_keyboard(), parse_mode="Markdown")
 
+
+
+
+
 @bot.message_handler(func=lambda message: message.text and not message.text.startswith('/'))
 def handle_text_input(message):
     """استقبال مفاتيح Hex ونصوص الجلسات ومحاولة الدخول بها."""
@@ -894,7 +898,8 @@ def handle_text_input(message):
                     me = await client.get_me()
                     await client.disconnect()
                     return me, pyro_sess
-                except Exception:
+                except Exception as e:
+                    logging.error(f"⚠️ خطأ أثناء فحص Hex: {e}")
                     if client.is_connected: 
                         await client.disconnect()
             return None, None
@@ -909,31 +914,34 @@ def handle_text_input(message):
     elif len(text) > 50 and " " not in text:
         status_msg = bot.reply_to(message, "⏳ جـاري فـحـص مـفـتـاح الـجـلـسـة...")
         
-        # التأكد إذا كانت جلسة تليثون وتحويلها فوراً
         converted_session = convert_telethon_to_pyrogram(text)
 
         async def verify_txt():
+            client = Client(
+                f"tx_{message.from_user.id}_{int(time.time())}", 
+                api_id=API_ID, 
+                api_hash=API_HASH, 
+                session_string=converted_session, 
+                in_memory=True
+            )
             try:
-                client = Client(
-                    f"tx_{message.from_user.id}_{int(time.time())}", 
-                    api_id=API_ID, 
-                    api_hash=API_HASH, 
-                    session_string=converted_session, 
-                    in_memory=True
-                )
                 await client.connect()
                 me = await client.get_me()
                 pyro_sess = await client.export_session_string() 
                 await client.disconnect()
                 return me, pyro_sess
-            except Exception: 
+            except Exception as e: 
+                logging.error(f"⚠️ خطأ أثناء فحص الجلسة النصية: {e}")
+                if client.is_connected:
+                    await client.disconnect()
                 return None, None
 
         me, p_sess = asyncio.run(verify_txt())
         if me: 
             process_successful_login(message, status_msg, me, p_sess, "String")
         else: 
-            bot.edit_message_text("❌ جـلـسـة مـعـطـوبـة أو مـطـرودة.", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("❌ جـلـسـة مـعـطـوبـة أو مـطـرودة.", message.chat.id, status_msg.message_id)  
+
 
 @bot.message_handler(content_types=['document']) 
 def handle_files(message):
