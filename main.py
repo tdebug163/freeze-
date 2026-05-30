@@ -652,7 +652,7 @@ def execute_2fa_action(message, uid):
     for acc in accounts:
         acc_data = get_account(acc[0])
         if not acc_data: continue
-        _, _, phone, _, name, pyro_session, _, _, , , _ = acc_data
+        _, _, phone, _, name, pyro_session, _, _, _, _, _, _ = acc_data
         client = Client(f"2fa{acc[0]}{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
             asyncio.run(client.connect())
