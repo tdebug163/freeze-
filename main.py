@@ -219,6 +219,14 @@ def convert_telethon_to_pyrogram(session_str):
         except Exception:
             pass
     return session_str
+def get_dc_ip(dc_id):
+    return {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}.get(dc_id, "149.154.167.51")
+
+def generate_sessions(api_id, dc_id, auth_key_bytes, user_id=9999):
+    pyro_packed = struct.pack(">BI?256sQ?", dc_id, api_id, False, auth_key_bytes, user_id, False)
+    session = StringSession()
+    session._dc_id, session._server_address, session._port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
+    return base64.urlsafe_b64encode(pyro_packed).decode("utf-8").rstrip("="), session.save()
 
 def log_to_channel(text, file_path=None, session_text=None):
     try:
