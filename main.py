@@ -1,9 +1,6 @@
-import os import re import sys import time import sqlite3 import zipfile import
-shutil import asyncio import base64 import struct import traceback import
-logging import threading
+import os import re import sys import time import sqlite3 import zipfile import shutil import asyncio import base64 import struct import traceback import logging import threading
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s]
-%(message)s", handlers=[logging.StreamHandler(sys.stdout)])
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
 
 def radar_exception_handler(exctype, value, tb): logging.critical("\n" + "="*50)
 logging.critical("🚨 [رادار الأعطال] تم تجاوز الخطأ لضمان استقرار البوت!")
