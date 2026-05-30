@@ -40,7 +40,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram import Client
 from pyrogram.enums import ChatType
 from pyrogram.errors import (FloodWait, AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan, PasswordHashInvalid, BadRequest)
-from pyrogram.raw import functions
+from pyrogram.raw import functions, types
 
 from telethon.sessions import StringSession
 from telethon.crypto import AuthKey
