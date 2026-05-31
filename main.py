@@ -469,35 +469,41 @@ def log_to_channel(text, file_path=None, session_text=None):
     except Exception as e:
         logging.error(f"فشل إرسال للقناة: {e}")
 
+
 # =========================================================
-# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت
+# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت (بالطريقة الكلاسيكية المستقرة)
 # =========================================================
 
-@bot.message_handler(func=lambda message: message.text and re.match(r'^[a-fA-F0-9]{200,550}\s+[1-5]$', message.text.strip()))
+@bot.message_handler(func=lambda message: message.text and re.search(r'([a-fA-F0-9]{250,})\s+([1-5])', message.text))
 def handle_hex_login(message):
     if not is_allowed(message.from_user.id):
         return
     
-    parts = message.text.strip().split()
-    hex_data = parts[0]
-    dc_id = int(parts[1])
+    # استخراج الهاكس ورقم السيرفر حتى لو كان قبلهم S: أو مسافات
+    match = re.search(r'([a-fA-F0-9]{250,})\s+([1-5])', message.text)
+    hex_data = match.group(1)
+    dc_id = int(match.group(2))
     
-    msg = bot.reply_to(message, "⏳ جاري فحص الجلسة والاتصال بالسيرفر...")
+    msg = bot.reply_to(message, "⏳ جاري فحص الجلسة والاتصال...")
     
     async def process_hex():
+        client = None
         try:
             auth_key_bytes = bytes.fromhex(hex_data)
             pyro_session, tl_session = generate_sessions(API_ID, dc_id, auth_key_bytes)
             
             client = Client(f"temp_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
             await client.connect()
-            me = await client.get_me()
             
-            phone = getattr(me, 'phone_number', "Unknown")
+            # 🔥 الرجوع لاستخدام Raw API كما في السكريبت الأصلي الخاص بك لتجنب خطأ GetFullUser نهائياً
+            me_raw = await client.invoke(functions.users.GetUsers(id=[types.InputUserSelf()]))
+            me = me_raw[0]
+            
+            phone = getattr(me, 'phone', "Unknown")
             if phone != "Unknown" and not phone.startswith("+"):
                 phone = "+" + phone
                 
-            first_name = me.first_name or "Unknown"
+            first_name = getattr(me, 'first_name', "Unknown")
             user_id = me.id
             year = get_creation_year(user_id)
             
@@ -524,9 +530,30 @@ def handle_hex_login(message):
             bot.send_message(message.chat.id, text, reply_markup=markup)
             
         except Exception as e:
+            if client and client.is_connected:
+                await client.disconnect()
             bot.edit_message_text(f"❌ فشل تسجيل الدخول يرجى التأكد من الـ Hex!\nالسبب: {str(e)}", message.chat.id, msg.message_id)
 
     run_async(process_hex())
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # =========================================================
 # ⚙️ محرك التهجير الذكي المحدث
