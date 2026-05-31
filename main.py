@@ -304,11 +304,11 @@ def get_all_accounts(owner_id):
     rows = c.fetchall()
     conn.close()
     return rows
-
 def get_account(acc_id):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT * FROM sessions WHERE id=?", (acc_id,))
+    # هنا حددنا الـ 12 عمود الأساسية عشان ما يخرب تفكيك البيانات في بقية السكريبت
+    c.execute("SELECT id, owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, auto_term_enabled, auto_term_interval, last_term_attempt, surveilled FROM sessions WHERE id=?", (acc_id,))
     row = c.fetchone()
     conn.close()
     return row
