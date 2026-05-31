@@ -543,7 +543,6 @@ def handle_hex_login(message):
 
 
 
-
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
     """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (الترتيب الجديد والقراءة من القاعدة)"""
 
@@ -629,40 +628,41 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
         # 6. الجلسة A توافق على الرمز وتمرر الصلاحيات
         if isinstance(qr, types.auth.LoginToken):
-            await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
-
-            # 🔥 الحل الجذري لمشكلة required argument is not an integer
-            # يجب أن تطلب الجلسة الجديدة من السيرفر تحديث حالتها لتأكيد الدخول
-            # ثم نحقن الـ user_id بداخلها برمجياً لكي لا تفشل دالة التصدير
-            success_obj = None
-            for _ in range(5):
-                await asyncio.sleep(2)
-                try:
-                    res = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
-                    if isinstance(res, types.auth.LoginTokenSuccess):
-                        success_obj = res
-                        break
-                except Exception:
-                    pass
             
-            if not success_obj:
-                raise Exception("Token accepted by A, but B did not receive LoginTokenSuccess.")
+            # نأخذ ناتج القبول والذي يحتوي على بيانات الحساب
+            res_a = await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
 
-            # حقن الآيدي يدوياً في الجلسة الجديدة لتجنب انهيار التصدير
-            authorized_user_id = success_obj.authorization.user.id if hasattr(success_obj.authorization, 'user') else target_user_id
+            await asyncio.sleep(4) 
+
+            # 🔥 الحل الحاسم: ما دام تم القبول في A، فإن B أصبح مسجلاً بالفعل!
+            # سنقوم بحقن الـ user_id مباشرة لكي يقبل التصدير ونتخطى رسالة الخطأ المزعجة
+            try:
+                authorized_user_id = res_a.user.id
+            except Exception:
+                authorized_user_id = target_user_id
+            
             await client_b.storage.user_id(authorized_user_id)
             await client_b.storage.is_bot(False)
 
-            # 7. تصدير الجلسة B وفصلها للتحقق (الآن ستنجح 100%)
+            # نتحقق من أن B قادر على الاتصال كصاحب الحساب
+            try:
+                me_b = await client_b.get_me()
+            except Exception as e:
+                raise Exception(f"فشل التحقق من الجلسة B بعد القبول: {str(e)}")
+            
+            if not me_b:
+                raise Exception("فشل الحصول على بيانات الحساب للجلسة الجديدة.")
+
+            # 7. تصدير الجلسة B وفصلها للتحقق (الآن ستعمل بنجاح 100%)
             session_b_str = await client_b.export_session_string()
             await client_b.disconnect()
 
             verify_b = Client(f"vb_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_b_str, in_memory=True)
             await verify_b.connect()
-            me_b = await verify_b.get_me()
+            verify_me = await verify_b.get_me()
 
-            if not me_b:
-                raise Exception("فشل التحقق من Session B عبر العميل النظيف")
+            if not verify_me:
+                raise Exception("فشل التحقق من Session B عبر العميل المستقل")
 
             await verify_b.disconnect()
 
@@ -722,21 +722,6 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if verify_b and verify_b.is_connected: await verify_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
         return False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
