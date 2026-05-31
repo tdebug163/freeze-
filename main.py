@@ -557,7 +557,6 @@ def handle_hex_login(message):
 
 
 
-
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
     """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (الترتيب الجديد والقراءة من القاعدة)"""
 
@@ -573,8 +572,8 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         row = c.fetchone()
         conn.close()
 
-        # في حال لم يتواجد DC أو Hex نضع افتراضي
-        target_dc = row[0] if row and row[0] else 2
+        # 🔥 الحل هنا: التأكد 100% أن الـ dc_id عبارة عن رقم صحيح (Integer) لتفادي انهيار struct.pack
+        target_dc = int(row[0]) if row and row[0] else 2
         saved_hex = row[1] if row and len(row) > 1 else "UNKNOWN"
 
         if not client_a.is_connected:
@@ -619,11 +618,10 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             device_model=B_DEVICE_MODEL
         ) 
         
-        # 🟢 الحل هنا: فتح التخزين أولاً لتهيئة القفل الداخلي لـ Pyrogram قبل حقن رقم الـ DC
         await client_b.storage.open()
-        await client_b.storage.dc_id(target_dc) # توجيه الجلسة الجديدة للسيرفر المطلوب مباشرة
+        await client_b.storage.dc_id(target_dc) # سيقبلها الآن بكل تأكيد لأنها Int
         await client_b.storage.test_mode(False)
-        await client_b.connect() # هنا Pyrogram سينشئ مفتاح AuthKey سليم 100%
+        await client_b.connect() 
 
         # 5. طلب رمز تسجيل الدخول لـ B 
         qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
@@ -635,9 +633,8 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             # ننشئ الجلسة مرة أخرى على السيرفر المطلوب
             client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=B_DEVICE_MODEL)
             
-            # 🟢 وكذلك هنا في حال تم تحويلنا لسيرفر آخر
             await client_b.storage.open()
-            await client_b.storage.dc_id(qr.dc_id)
+            await client_b.storage.dc_id(int(qr.dc_id)) # تأكيد تحويلها لرقم
             await client_b.storage.test_mode(False)
             await client_b.connect()
 
