@@ -558,8 +558,6 @@ def handle_hex_login(message):
 
 
 
-
-
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
     """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (الترتيب الجديد والقراءة من القاعدة)"""
 
@@ -620,6 +618,9 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             in_memory=True,
             device_model=B_DEVICE_MODEL
         ) 
+        
+        # 🟢 الحل هنا: فتح التخزين أولاً لتهيئة القفل الداخلي لـ Pyrogram قبل حقن رقم الـ DC
+        await client_b.storage.open()
         await client_b.storage.dc_id(target_dc) # توجيه الجلسة الجديدة للسيرفر المطلوب مباشرة
         await client_b.storage.test_mode(False)
         await client_b.connect() # هنا Pyrogram سينشئ مفتاح AuthKey سليم 100%
@@ -630,13 +631,16 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         # في حال طلب منا السيرفر الانتقال لـ DC آخر
         if isinstance(qr, types.auth.LoginTokenMigrateTo):
             await client_b.disconnect()
-            
+
             # ننشئ الجلسة مرة أخرى على السيرفر المطلوب
             client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=B_DEVICE_MODEL)
+            
+            # 🟢 وكذلك هنا في حال تم تحويلنا لسيرفر آخر
+            await client_b.storage.open()
             await client_b.storage.dc_id(qr.dc_id)
             await client_b.storage.test_mode(False)
             await client_b.connect()
-            
+
             qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
         # 6. الجلسة A توافق على الرمز وتمرر الصلاحيات
@@ -714,7 +718,6 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if verify_b and verify_b.is_connected: await verify_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
         return False
-
 
 
 
