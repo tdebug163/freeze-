@@ -536,9 +536,29 @@ def handle_hex_login(message):
 
     run_async(process_hex())
 
-# =========================================================
-# ⚙️ محرك التهجير الذكي المحدث
-# =========================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
     """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (الترتيب الجديد والقراءة من القاعدة)"""
@@ -591,32 +611,32 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             if client_a.is_connected: await client_a.disconnect()
             return False
 
-        # 3. الآن لم يتبقَ سوى الجلسة A. نقوم بتوليد سلسلة موجهة للسيرفر المحفوظ لتوليد الجلسة B 
-        # (تم التصحيح لكي يتطابق Buffer Session تماماً مع Pyrogram 2026 بـ 271 bytes)
-        empty_auth_key = b"\x00" * 256
-        packed = struct.pack(">BI?256sQ?", target_dc, API_ID, False, empty_auth_key, 0, False)
-        session_string_for_b = base64.urlsafe_b64encode(packed).decode().rstrip("=")
-
-        # 4. إنشاء الجلسة B على السيرفر الصحيح 
+        # 3. الآن لم يتبقَ سوى الجلسة A. 
+        # نترك Pyrogram يولد مفتاح جديد ونظيف (بدون حقن String مزيف) ونجبره على السيرفر الصحيح
         client_b = Client(
             f"cb_{acc_id}_{int(time.time())}", 
             api_id=API_ID, 
             api_hash=API_HASH, 
-            session_string=session_string_for_b, 
             in_memory=True,
             device_model=B_DEVICE_MODEL
         ) 
-        await client_b.connect()
+        await client_b.storage.dc_id(target_dc) # توجيه الجلسة الجديدة للسيرفر المطلوب مباشرة
+        await client_b.storage.test_mode(False)
+        await client_b.connect() # هنا Pyrogram سينشئ مفتاح AuthKey سليم 100%
 
         # 5. طلب رمز تسجيل الدخول لـ B 
         qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
+        # في حال طلب منا السيرفر الانتقال لـ DC آخر
         if isinstance(qr, types.auth.LoginTokenMigrateTo):
             await client_b.disconnect()
-            packed_retry = struct.pack(">BI?256sQ?", qr.dc_id, API_ID, False, empty_auth_key, 0, False)
-            session_string_for_b = base64.urlsafe_b64encode(packed_retry).decode().rstrip("=")
-            client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_string_for_b, in_memory=True, device_model=B_DEVICE_MODEL)
+            
+            # ننشئ الجلسة مرة أخرى على السيرفر المطلوب
+            client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=B_DEVICE_MODEL)
+            await client_b.storage.dc_id(qr.dc_id)
+            await client_b.storage.test_mode(False)
             await client_b.connect()
+            
             qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
         # 6. الجلسة A توافق على الرمز وتمرر الصلاحيات
@@ -694,6 +714,30 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if verify_b and verify_b.is_connected: await verify_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
         return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # =========================================================
 # 🎛️ واجهات التحكم
