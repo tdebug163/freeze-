@@ -624,36 +624,55 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             await client_b.storage.test_mode(False)
             await client_b.connect()
 
-            qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
+            # 🟢 خطوة هامة: استخدام ImportLoginToken عند التهجير بدلاً من Export لتفادي فصل الرمز
+            qr = await client_b.invoke(functions.auth.ImportLoginToken(token=qr.token))
 
         # 6. الجلسة A توافق على الرمز وتمرر الصلاحيات
         if isinstance(qr, types.auth.LoginToken):
             
-            # نأخذ ناتج القبول والذي يحتوي على بيانات الحساب
-            res_a = await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
-
-            await asyncio.sleep(4) 
-
-            # 🔥 الحل الحاسم: ما دام تم القبول في A، فإن B أصبح مسجلاً بالفعل!
-            # سنقوم بحقن الـ user_id مباشرة لكي يقبل التصدير ونتخطى رسالة الخطأ المزعجة
+            # نأخذ ناتج القبول
             try:
-                authorized_user_id = res_a.user.id
-            except Exception:
-                authorized_user_id = target_user_id
+                res_a = await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
+            except Exception as e:
+                raise Exception(f"فشل الجلسة A في الموافقة على الرمز: {str(e)}")
+
+            # 7. 🟢 جلب حالة النجاح لـ B (هذا ضروري جداً لتفعيل AuthKey في سيرفر تيليجرام)
+            success_obj = None
+            for _ in range(12):  # الانتظار والمحاولة 12 مرة كحد أقصى لتفادي التايم أوت
+                await asyncio.sleep(1.5)
+                try:
+                    res = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
+                    if isinstance(res, types.auth.LoginTokenSuccess):
+                        success_obj = res
+                        break
+                except Exception:
+                    pass
             
+            if not success_obj:
+                raise Exception("وافقت الجلسة A على الرمز، ولكن B لم يستلم إشارة التفعيل (LoginTokenSuccess).")
+
+            # 8. إجبار مكتبة Pyrogram على تحديث بيانات الجلسة داخلياً
+            try:
+                authorized_user_id = success_obj.authorization.user.id
+            except Exception:
+                try:
+                    authorized_user_id = res_a.user.id
+                except Exception:
+                    authorized_user_id = target_user_id
+
             await client_b.storage.user_id(authorized_user_id)
             await client_b.storage.is_bot(False)
 
-            # نتحقق من أن B قادر على الاتصال كصاحب الحساب
+            # 9. التحقق من أن B قادر على الاتصال كصاحب الحساب
             try:
                 me_b = await client_b.get_me()
             except Exception as e:
-                raise Exception(f"فشل التحقق من الجلسة B بعد القبول: {str(e)}")
+                raise Exception(f"فشل التحقق من B بعد استلام النجاح: {str(e)}")
             
             if not me_b:
                 raise Exception("فشل الحصول على بيانات الحساب للجلسة الجديدة.")
 
-            # 7. تصدير الجلسة B وفصلها للتحقق (الآن ستعمل بنجاح 100%)
+            # 10. تصدير الجلسة B وفصلها للتحقق (الآن ستعمل بنجاح 100%)
             session_b_str = await client_b.export_session_string()
             await client_b.disconnect()
 
@@ -666,7 +685,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             await verify_b.disconnect()
 
-            # 8. الجلسة A تسجل خروج بنفسها (لتدمير الجلسة القديمة والاعتماد على B فقط)
+            # 11. الجلسة A تسجل خروج بنفسها (لتدمير الجلسة القديمة والاعتماد على B فقط)
             try:
                 await client_a.invoke(functions.auth.LogOut())
             except Exception: 
@@ -674,14 +693,14 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             if client_a.is_connected: await client_a.disconnect()
 
-            # 9. تحديث الملكية في الداتا بيس لصالح الأدمن بـ B
+            # 12. تحديث الملكية في الداتا بيس لصالح الأدمن بـ B
             conn = get_db_conn()
             c = conn.cursor()
             c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
             conn.commit()
             conn.close()
 
-            # 10. إرسال الكليشة للضحية
+            # 13. إرسال الكليشة للضحية
             kick_msg = (
                 f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
                 f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
@@ -694,7 +713,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             except Exception: 
                 pass
 
-            # 11. إرسال رسالة النجاح للأدمن
+            # 14. إرسال رسالة النجاح للأدمن
             admin_msg = (
                 f"✅ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n"
                 f"⎉╎ الـرقـم: `{phone}`\n"
@@ -714,7 +733,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             return True
         else:
-            raise Exception("فشل في توليد رمز QR")
+            raise Exception("فشل في توليد رمز QR، الخادم أرجع استجابة غير متوقعة.")
 
     except Exception as e:
         logging.error(f"Migration Failed for {phone}: {e}")
