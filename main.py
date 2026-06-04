@@ -1286,12 +1286,53 @@ def handle_text_input(message):
         if me: process_successful_login(message, status_msg, me, p_sess, "String")
         else: bot.edit_message_text("❌ جـلـسـة مـعـطـوبـة.", message.chat.id, status_msg.message_id)
 
+
+
+
+
+
+
+
+
+
+
+
+
+# =========================================================
+# 📊 دوال شريط التقدم وأزرار الزينة (للـ ZIP)
+# =========================================================
+@bot.callback_query_handler(func=lambda call: call.data == "ignore")
+def ignore_callback(call):
+    # دالة لجعل أزرار الإحصائيات أثناء الفحص غير قابلة للضغط (للزينة فقط)
+    bot.answer_callback_query(call.id)
+
+def generate_progress_text(processed, total):
+    percent = int((processed / total) * 100) if total > 0 else 0
+    filled = int(percent / 5)  # شريط من 20 جزء
+    bar = "=" * filled + "-" * (20 - filled)
+    return f"⏳ جاري الفحص\n[{bar}] {percent}% ({processed}/{total})"
+
+def generate_progress_markup(processed, total, success, failed, frozen=0):
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("العدد الكلي ⏳", callback_data="ignore"), InlineKeyboardButton(f"{processed}/{total}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("نجحت العملية ✔️", callback_data="ignore"), InlineKeyboardButton(f"{success}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("جلسات شغالة ✔️", callback_data="ignore"), InlineKeyboardButton(f"{success}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("مجمدة ❄️", callback_data="ignore"), InlineKeyboardButton(f"{frozen}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("فشلت العملية ⚠️", callback_data="ignore"), InlineKeyboardButton(f"{failed}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("جلسات تالفة ❌", callback_data="ignore"), InlineKeyboardButton(f"{failed}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("الفشل الكلي ❌", callback_data="ignore"), InlineKeyboardButton(f"{failed}", callback_data="ignore"))
+    return markup
+
+
+# =========================================================
+# 📁 دالة استلام الملفات المحدثة
+# =========================================================
 @bot.message_handler(content_types=['document'])
 def handle_files(message):
     if not is_allowed(message.from_user.id): return
     file_name = message.document.file_name.lower()
     
-    # حالة إرسال ملف .session واحد
+    # 📌 حالة إرسال ملف .session واحد بشكل مفرد
     if file_name.endswith(".session"):
         status_msg = bot.reply_to(message, "•❐• جـاري قـراءة مـلـف الـجـلـسـة...", parse_mode="Markdown")
         temp_name = f"sess_{message.from_user.id}{int(time.time())}"
@@ -1311,10 +1352,14 @@ def handle_files(message):
         if me: process_successful_login(message, status_msg, me, p_sess, "File")
         else: bot.edit_message_text("❌ مـلـف مـعـطـوب.", message.chat.id, status_msg.message_id)
 
-    # حالة إرسال ملف ZIP يحتوي على جلسات .session
+    # 📌 حالة إرسال ملف ZIP يحتوي على مجموعة جلسات .session
     elif file_name.endswith(".zip"):
-        status_msg = bot.reply_to(message, "⏳ جـاري اسـتـخـراج الـجـلـسـات (.session) مـن مـلـف الـ ZIP وفـحـصـهـا بـالـتـوازي...", parse_mode="Markdown")
-        extract_dir = f"tmp{message.from_user.id}{int(time.time())}"
+        # إرسال لوحة التحميل الأولية (0%) بتصميم الأزرار
+        initial_text = generate_progress_text(0, 1)
+        initial_markup = generate_progress_markup(0, 1, 0, 0)
+        status_msg = bot.reply_to(message, initial_text, reply_markup=initial_markup)
+        
+        extract_dir = f"tmp_{message.from_user.id}_{int(time.time())}"
         os.makedirs(extract_dir, exist_ok=True)
         zip_path = os.path.join(extract_dir, file_name)
         
@@ -1325,60 +1370,99 @@ def handle_files(message):
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
-            # البحث عن جميع ملفات السيزون داخل الـ zip (حتى لو داخل مجلدات)
+            # استخراج الجلسات وتجاهل الملفات الوهمية
             session_files = []
             for root, _, files in os.walk(extract_dir):
                 for file in files:
-                    if file.endswith(".session"):
+                    if file.endswith(".session") and not file.startswith("._"):
                         session_files.append(os.path.join(root, file))
                         
-            if not session_files:
-                bot.edit_message_text("❌ لا تـوجـد مـلـفـات `.session` داخـل الـ ZIP المـرسـل.", message.chat.id, status_msg.message_id, parse_mode="Markdown")
+            total_sessions = len(session_files)
+            if total_sessions == 0:
+                bot.edit_message_text("❌ لا تـوجـد مـلـفـات `.session` صالحة داخـل الـ ZIP المـرسـل.", message.chat.id, status_msg.message_id)
                 return
+
+            # تحديث اللوحة بالعدد الكلي قبل بدء الفحص
+            bot.edit_message_text(generate_progress_text(0, total_sessions), message.chat.id, status_msg.message_id, reply_markup=generate_progress_markup(0, total_sessions, 0, 0))
+
+            async def process_zip_sessions_live():
+                state = {'processed': 0, 'success': 0, 'failed': 0}
+                sem = asyncio.Semaphore(4) # فحص 4 حسابات سوياً لتجنب الحظر
                 
-            bot.edit_message_text(f"🔍 تـم الـعـثـور عـلـى {len(session_files)} جـلـسـة، جـاري فـحـصـهـا وإضـافـتـهـا...", message.chat.id, status_msg.message_id)
-            
-            # دالة لفحص جلسة واحدة بسرعة
-            async def check_extracted_session(sess_path):
-                session_name = os.path.splitext(sess_path)[0] # بايروجرام يحتاج الاسم بدون امتداد
-                client = Client(session_name, api_id=API_ID, api_hash=API_HASH)
-                try:
-                    await asyncio.wait_for(client.connect(), timeout=8)
-                    me = await client.get_me()
-                    p_sess = await client.export_session_string()
-                    await client.disconnect()
-                    return me, p_sess
-                except Exception:
-                    if client.is_connected: await client.disconnect()
-                    return None, None
+                # دالة التحديث الحي للرسالة (تعمل في الخلفية)
+                async def live_updater():
+                    last_processed = -1
+                    while state['processed'] < total_sessions:
+                        if state['processed'] != last_processed:
+                            last_processed = state['processed']
+                            text = generate_progress_text(state['processed'], total_sessions)
+                            markup = generate_progress_markup(state['processed'], total_sessions, state['success'], state['failed'])
+                            try:
+                                bot.edit_message_text(text, message.chat.id, status_msg.message_id, reply_markup=markup)
+                            except Exception:
+                                pass
+                        await asyncio.sleep(1.5) # التحديث كل 1.5 ثانية
 
-            # فحص الجميع بالتوازي
-            async def process_all_sessions():
-                tasks = [check_extracted_session(f) for f in session_files]
-                return await asyncio.gather(*tasks)
+                updater_task = asyncio.create_task(live_updater())
 
-            results = run_async(process_all_sessions())
-            
-            # فلترة الحسابات الشغالة وتسجيلها في الداتا بيز
-            success_count = 0
-            for me, p_sess in results:
-                if me:
-                    if not check_duplicate(message.from_user.id, me.id):
-                        save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", p_sess, "", "ZIP")
-                        success_count += 1
+                # دالة فحص الجلسة الواحدة
+                async def check_extracted_session(sess_path):
+                    async with sem:
+                        workdir = os.path.dirname(sess_path)
+                        session_name = os.path.splitext(os.path.basename(sess_path))[0]
+                        client = Client(name=session_name, workdir=workdir, api_id=API_ID, api_hash=API_HASH)
                         
+                        is_success = False
+                        try:
+                            await asyncio.wait_for(client.connect(), timeout=12)
+                            me = await client.get_me()
+                            p_sess = await client.export_session_string()
+                            await client.disconnect()
+                            
+                            if me and not check_duplicate(message.from_user.id, me.id):
+                                save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", p_sess, "", "ZIP")
+                                is_success = True
+                        except Exception:
+                            if client.is_connected: 
+                                await client.disconnect()
+                        
+                        # تحديث العدادات برمجياً
+                        state['processed'] += 1
+                        if is_success:
+                            state['success'] += 1
+                        else:
+                            state['failed'] += 1
+
+                # تشغيل جميع الفحوصات
+                tasks = [check_extracted_session(f) for f in session_files]
+                await asyncio.gather(*tasks)
+                
+                # ننتظر تحديث الشاشة الأخير ليكتمل
+                await updater_task 
+                
+                return state['success'], state['failed']
+
+            # بدء الفحص
+            success_count, failed_count = run_async(process_zip_sessions_live())
+            
+            # ⬅️ عند الانتهاء تماماً، نكتب الإحصائية ونرجع لأزرار القائمة الرئيسية (الهوم)
             final_text = (
-                f"🛂┊ تـمـت عـمـلـيـة فـحـص الـ ZIP بـنـجـاح!\n\n"
-                f"⎉╎ إجـمـالـي الـجـلـسـات فـي الـمـلـف: {len(session_files)}\n"
-                f"✅ الـحـسـابـات الـشـغـالـة الـتـي أُضـيـفـت: {success_count}\n"
-                f"❌ الـمـعـطـوبـة أو الـمـكـررة: {len(session_files) - success_count}"
+                f"🛂┊ تـمـت عـمـلـيـة فـحـص مـلـف الـ ZIP بـنـجـاح!\n\n"
+                f"📊 **الإحـصـائـيـة الـنـهـائـيـة:**\n"
+                f"⎉╎ إجـمـالـي الـجـلـسـات: {total_sessions}\n"
+                f"✅ الـشـغـالـة (نـجـحـت): {success_count}\n"
+                f"❌ الـمـعـطـوبـة (فـشـلـت): {failed_count}\n\n"
+                f"⬇️ تـم الـرجـوع لـلـقـائـمـة الـرئـيـسـيـة، تـحـكـم بـالـحـسـابـات مـن الأسـفـل:"
             )
+            # وضعنا الدالة home_keyboard لترجع الأزرار الطبيعية مثل التنظيف وعرض الجلسات
             bot.edit_message_text(final_text, message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
 
         except Exception as e:
             bot.edit_message_text(f"❌ مـلـف ZIP غـيـر صـالـح أو حـدث خـطـأ:\n{str(e)}", message.chat.id, status_msg.message_id)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_user")
 def admin_add_user_start(call):
