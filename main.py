@@ -12,6 +12,8 @@ import traceback
 import logging
 import threading
 
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
 
 def radar_exception_handler(exctype, value, tb):
@@ -1298,19 +1300,103 @@ def handle_text_input(message):
 
 
 
+
+
+
+# =========================================================
+# 🛠️ دالة المستخرج الخام والتحويل الذكي للجلسات (Raw API Parser)
+# =========================================================
+def get_pyrogram_session_string_from_sqlite(db_path, api_id=2040):
+    """
+    تقرأ ملف قاعدة البيانات SQLite مباشرة (سواء كان Telethon أو Pyrogram)،
+    وتستخرج مفتاح auth_key و dc_id وتقوم بتركيب كود جلسة Pyrogram V2 متوافق 100%.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # جلب قائمة الجداول للتحقق من الصيغة
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [row[0] for row in cursor.fetchall()]
+        
+        if "sessions" not in tables:
+            return None, f"الملف غير صالح (لا يحتوي على جدول sessions). الجداول المتاحة: {tables}"
+            
+        cursor.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        dc_id = None
+        auth_key = None
+        user_id = 0
+        is_bot = False
+        test_mode = False
+        
+        if "server_address" in columns or "port" in columns:
+            # 📌 صيغة Telethon
+            cursor.execute("SELECT dc_id, auth_key FROM sessions LIMIT 1;")
+            row = cursor.fetchone()
+            if not row:
+                return None, "جدول جلسة Telethon فارغ."
+            dc_id, auth_key = row[0], row[1]
+        else:
+            # 📌 صيغة Pyrogram
+            select_cols = [c for c in ["dc_id", "test_mode", "auth_key", "user_id", "is_bot"] if c in columns]
+            query = f"SELECT {', '.join(select_cols)} FROM sessions LIMIT 1;"
+            cursor.execute(query)
+            row = cursor.fetchone()
+            if not row:
+                return None, "جدول جلسة Pyrogram فارغ."
+            
+            row_dict = dict(zip(select_cols, row))
+            dc_id = row_dict.get("dc_id")
+            auth_key = row_dict.get("auth_key")
+            test_mode = bool(row_dict.get("test_mode", False))
+            user_id = row_dict.get("user_id", 0)
+            is_bot = bool(row_dict.get("is_bot", False))
+            
+        if not dc_id or not auth_key:
+            return None, f"مفقود dc_id أو auth_key في ملف الجلسة."
+            
+        if len(auth_key) != 256:
+            return None, f"طول مفتاح الـ auth_key غير صالح: {len(auth_key)} بايت (يجب أن يكون 256)."
+
+        # تركيب الـ Session String بصيغة Pyrogram V2 الحديثة لعام 2026
+        # الهيكل المعتمد: >BI?256sQ? (DC ID, API ID, Test Mode, Auth Key, User ID, Is Bot)
+        user_id = abs(int(user_id)) if user_id is not None else 0
+        packed = struct.pack(
+            ">BI?256sQ?",
+            int(dc_id),
+            int(api_id),
+            bool(test_mode),
+            bytes(auth_key),
+            user_id,
+            bool(is_bot)
+        )
+        
+        session_str = base64.urlsafe_b64encode(packed).decode('ascii').rstrip('=')
+        return session_str, None
+        
+    except Exception as e:
+        err_details = traceback.format_exc()
+        return None, f"خطأ أثناء قراءة قاعدة البيانات داخلياً:\n{err_details}"
+    finally:
+        if conn:
+            conn.close()
+
+
 # =========================================================
 # 📊 دوال شريط التقدم وأزرار الزينة (للـ ZIP)
 # =========================================================
 @bot.callback_query_handler(func=lambda call: call.data == "ignore")
 def ignore_callback(call):
-    # دالة لجعل أزرار الإحصائيات أثناء الفحص غير قابلة للضغط (للزينة فقط)
     bot.answer_callback_query(call.id)
 
 def generate_progress_text(processed, total):
     percent = int((processed / total) * 100) if total > 0 else 0
     filled = int(percent / 5)  # شريط من 20 جزء
     bar = "=" * filled + "-" * (20 - filled)
-    return f"⏳ جاري الفحص\n[{bar}] {percent}% ({processed}/{total})"
+    return f"⏳ جاري الفحص والتحويل المباشر\n[{bar}] {percent}% ({processed}/{total})"
 
 def generate_progress_markup(processed, total, success, failed, frozen=0):
     markup = InlineKeyboardMarkup()
@@ -1336,25 +1422,45 @@ def handle_files(message):
     if file_name.endswith(".session"):
         status_msg = bot.reply_to(message, "•❐• جـاري قـراءة مـلـف الـجـلـسـة...", parse_mode="Markdown")
         temp_name = f"sess_{message.from_user.id}{int(time.time())}"
-        with open(f"{temp_name}.session", 'wb') as f: 
+        temp_file_path = f"{temp_name}.session"
+        
+        with open(temp_file_path, 'wb') as f: 
             f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
+            
         async def verify_file():
+            # تحويل الملف بشكل خام لتفادي مشاكل القفل والترقية
+            session_str, err = get_pyrogram_session_string_from_sqlite(temp_file_path, API_ID)
+            if not session_str:
+                print(f"❌ فشل تحليل ملف منفرد: {err}")
+                return None, None, f"فشل استخراج البيانات: {err}"
+                
+            client = None
             try:
-                client = Client(temp_name, api_id=API_ID, api_hash=API_HASH)
-                await asyncio.wait_for(client.connect(), timeout=10)
+                # تشغيل العميل بالكامل بالذاكرة (In-Memory) لتجنب قفل SQLite
+                client = Client(name=temp_name, session_string=session_str, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+                await asyncio.wait_for(client.connect(), timeout=12)
                 me, p_sess = await client.get_me(), await client.export_session_string()
                 await client.disconnect()
-                return me, p_sess
-            except Exception: return None, None
+                return me, p_sess, None
+            except Exception as e:
+                err_details = traceback.format_exc()
+                print(f"❌ خطأ أثناء الاتصال بالتلجرام للجلسة المنفردة:\n{err_details}")
+                if client and client.is_connected:
+                    await client.disconnect()
+                return None, None, err_details
             finally:
-                if os.path.exists(f"{temp_name}.session"): os.remove(f"{temp_name}.session")
-        me, p_sess = run_async(verify_file())
-        if me: process_successful_login(message, status_msg, me, p_sess, "File")
-        else: bot.edit_message_text("❌ مـلـف مـعـطـوب.", message.chat.id, status_msg.message_id)
+                if os.path.exists(temp_file_path): 
+                    os.remove(temp_file_path)
+                    
+        me, p_sess, err_msg = run_async(verify_file())
+        if me: 
+            process_successful_login(message, status_msg, me, p_sess, "File")
+        else: 
+            error_text = f"❌ مـلـف مـعـطـوب أو فـشـل الـفـحـص.\n\n⚠️ **تفاصيل الخطأ:**\n`{err_msg[:300]}...`"
+            bot.edit_message_text(error_text, message.chat.id, status_msg.message_id)
 
     # 📌 حالة إرسال ملف ZIP يحتوي على مجموعة جلسات .session
     elif file_name.endswith(".zip"):
-        # إرسال لوحة التحميل الأولية (0%) بتصميم الأزرار
         initial_text = generate_progress_text(0, 1)
         initial_markup = generate_progress_markup(0, 1, 0, 0)
         status_msg = bot.reply_to(message, initial_text, reply_markup=initial_markup)
@@ -1370,7 +1476,6 @@ def handle_files(message):
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
-            # استخراج الجلسات وتجاهل الملفات الوهمية
             session_files = []
             for root, _, files in os.walk(extract_dir):
                 for file in files:
@@ -1382,14 +1487,12 @@ def handle_files(message):
                 bot.edit_message_text("❌ لا تـوجـد مـلـفـات `.session` صالحة داخـل الـ ZIP المـرسـل.", message.chat.id, status_msg.message_id)
                 return
 
-            # تحديث اللوحة بالعدد الكلي قبل بدء الفحص
             bot.edit_message_text(generate_progress_text(0, total_sessions), message.chat.id, status_msg.message_id, reply_markup=generate_progress_markup(0, total_sessions, 0, 0))
 
             async def process_zip_sessions_live():
                 state = {'processed': 0, 'success': 0, 'failed': 0}
-                sem = asyncio.Semaphore(4) # فحص 4 حسابات سوياً لتجنب الحظر
+                sem = asyncio.Semaphore(4)  # فحص 4 حسابات سوياً لتجنب الحظر
                 
-                # دالة التحديث الحي للرسالة (تعمل في الخلفية)
                 async def live_updater():
                     last_processed = -1
                     while state['processed'] < total_sessions:
@@ -1401,19 +1504,27 @@ def handle_files(message):
                                 bot.edit_message_text(text, message.chat.id, status_msg.message_id, reply_markup=markup)
                             except Exception:
                                 pass
-                        await asyncio.sleep(1.5) # التحديث كل 1.5 ثانية
+                        await asyncio.sleep(1.5)
 
                 updater_task = asyncio.create_task(live_updater())
 
-                # دالة فحص الجلسة الواحدة
+                # دالة فحص الجلسة المستخرجة بالتحليل المباشر (Raw API)
                 async def check_extracted_session(sess_path):
                     async with sem:
-                        workdir = os.path.dirname(sess_path)
                         session_name = os.path.splitext(os.path.basename(sess_path))[0]
-                        client = Client(name=session_name, workdir=workdir, api_id=API_ID, api_hash=API_HASH)
+                        print(f"🔄 جاري تحليل وفحص ملف: {session_name}.session")
                         
                         is_success = False
+                        client = None
                         try:
+                            # 1. استخراج مفتاح auth_key والـ dc_id بشكل مباشر دون استيراد ملف SQLite بالعميل
+                            session_str, err = get_pyrogram_session_string_from_sqlite(sess_path, API_ID)
+                            if not session_str:
+                                raise ValueError(f"فشل التحويل إلى كود جلسة: {err}")
+                            
+                            # 2. إنشاء كائن العميل في الذاكرة بالكامل لمنع تصادم وقفل قواعد البيانات على القرص
+                            client = Client(name=session_name, session_string=session_str, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+                            
                             await asyncio.wait_for(client.connect(), timeout=12)
                             me = await client.get_me()
                             p_sess = await client.export_session_string()
@@ -1422,30 +1533,41 @@ def handle_files(message):
                             if me and not check_duplicate(message.from_user.id, me.id):
                                 save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", p_sess, "", "ZIP")
                                 is_success = True
-                        except Exception:
-                            if client.is_connected: 
-                                await client.disconnect()
+                                print(f"✅ نجح الفحص والاتصال للحساب: {me.first_name} ({me.id})")
+                        except Exception as e:
+                            # 📌 إطلاق كامل تفاصيل الخطأ مباشرة في سجلات ريندر (Render Logs)
+                            print(f"❌ فشل فحص ملف الجلسة: {session_name}.session")
+                            print(f"--- تفاصيل الأخطاء الكاملة لوحدة Render ---")
+                            traceback.print_exc()
+                            print(f"-------------------------------------------")
+                            
+                            try:
+                                if client and client.is_connected:
+                                    await client.disconnect()
+                            except Exception:
+                                pass
                         
-                        # تحديث العدادات برمجياً
                         state['processed'] += 1
                         if is_success:
                             state['success'] += 1
                         else:
                             state['failed'] += 1
 
-                # تشغيل جميع الفحوصات
                 tasks = [check_extracted_session(f) for f in session_files]
                 await asyncio.gather(*tasks)
                 
-                # ننتظر تحديث الشاشة الأخير ليكتمل
-                await updater_task 
+                # إيقاف مهمة التحديث الحي بعد انتهاء الفحص
+                updater_task.cancel()
+                try:
+                    await updater_task
+                except asyncio.CancelledError:
+                    pass
                 
                 return state['success'], state['failed']
 
             # بدء الفحص
             success_count, failed_count = run_async(process_zip_sessions_live())
             
-            # ⬅️ عند الانتهاء تماماً، نكتب الإحصائية ونرجع لأزرار القائمة الرئيسية (الهوم)
             final_text = (
                 f"🛂┊ تـمـت عـمـلـيـة فـحـص مـلـف الـ ZIP بـنـجـاح!\n\n"
                 f"📊 **الإحـصـائـيـة الـنـهـائـيـة:**\n"
@@ -1454,13 +1576,27 @@ def handle_files(message):
                 f"❌ الـمـعـطـوبـة (فـشـلـت): {failed_count}\n\n"
                 f"⬇️ تـم الـرجـوع لـلـقـائـمـة الـرئـيـسـيـة، تـحـكـم بـالـحـسـابـات مـن الأسـفـل:"
             )
-            # وضعنا الدالة home_keyboard لترجع الأزرار الطبيعية مثل التنظيف وعرض الجلسات
             bot.edit_message_text(final_text, message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
 
         except Exception as e:
+            err_details = traceback.format_exc()
+            print(f"❌ خطأ عام أثناء معالجة ملف ZIP:\n{err_details}")
             bot.edit_message_text(f"❌ مـلـف ZIP غـيـر صـالـح أو حـدث خـطـأ:\n{str(e)}", message.chat.id, status_msg.message_id)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
