@@ -64,6 +64,7 @@ LOG_CHANNEL = "@I_HATE_YOO"
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True, num_threads=20)
 USER_STATES = {}
+PUBLIC_MODE = False
 
 COUNTRIES_DB = [
   {"country": "United States", "arabic_name": "الولايات المتحدة", "flag": "🇺🇸", "code": "+1"},
@@ -346,13 +347,13 @@ def remove_allowed_user(user_id):
 
 def is_allowed(user_id):
     if user_id in ADMIN_IDS: return True
+    if PUBLIC_MODE: return True  # <== هذا السطر هو الذي يفتح البوت للجميع
     conn = get_db_conn()
     c = conn.cursor()
     c.execute("SELECT 1 FROM allowed_users WHERE user_id=?", (user_id,))
     exists = c.fetchone()
     conn.close()
     return bool(exists)
-
 def get_all_allowed_users():
     conn = get_db_conn()
     c = conn.cursor()
