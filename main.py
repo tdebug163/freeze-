@@ -1623,66 +1623,48 @@ def handle_files(message):
 
 
 
-
-
-
-
-# متغير عام لتخزين حالة السماح للكل (يفضل حفظه في قاعدة بيانات لضمان عدم ضياعه عند إعادة تشغيل البوت)
-PUBLIC_MODE = False 
-
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_user")
 def admin_add_user_start(call):
     if call.from_user.id not in ADMIN_IDS: return
     
-    # تحديد شكل الزر بناءً على الحالة الحالية
+    # تحديد شكل الزر بناءً على حالة البوت
     status_icon = "✅" if PUBLIC_MODE else "❌"
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton(f"السماح للكل {status_icon}", callback_data="toggle_public_mode"))
-    markup.add(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    markup.row(InlineKeyboardButton(f"السماح للكل {status_icon}", callback_data="toggle_public_mode"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
     
-    text = (
-        "•❐• أرسـل ايـدي الـمـسـتـخـدم الـذي تـريـد إضـافـتـه:\n"
-        "أو يمكنك تفعيل/تعطيل الوضع العام للبوت من الزر أدناه:"
-    )
-    
+    text = "•❐• أرسـل ايـدي الـمـسـتـخـدم الـذي تـريـد إضـافـتـه او اختر الانلاين الاتي لتفعيل البوت للجميع:"
     msg = bot.send_message(call.message.chat.id, text, reply_markup=markup)
     USER_STATES[call.from_user.id] = {"action": "add_user"}
     bot.register_next_step_handler(msg, process_add_user)
 
-# معالج ضغطة زر تفعيل/تعطيل السماح للكل
+# الدالة الجديدة الخاصة بضغط الزر لتفعيل/تعطيل البوت للجميع
 @bot.callback_query_handler(func=lambda call: call.data == "toggle_public_mode")
 def toggle_public_mode(call):
     if call.from_user.id not in ADMIN_IDS: return
     global PUBLIC_MODE
+    PUBLIC_MODE = not PUBLIC_MODE # عكس الحالة
     
-    # عكس الحالة الحالية
-    PUBLIC_MODE = not PUBLIC_MODE
     status_icon = "✅" if PUBLIC_MODE else "❌"
-    
-    # تحديث الكيبورد
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton(f"السماح للكل {status_icon}", callback_data="toggle_public_mode"))
-    markup.add(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    markup.row(InlineKeyboardButton(f"السماح للكل {status_icon}", callback_data="toggle_public_mode"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
     
-    new_text = (
-        f"تـم تـحديث حالة الـبوت!\n"
-        f"وضـع الـسماح لـلجميع الآن: {status_icon}\n\n"
-        f"•❐• لا يـزال بإمـكانك إرسـال ايـدي لـإضـافـتـه يدوياً:"
-    )
+    text = "•❐• أرسـل ايـدي الـمـسـتـخـدم الـذي تـريـد إضـافـتـه او اختر الانلاين الاتي لتفعيل البوت للجميع:"
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
     
-    bot.edit_message_text(new_text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+    # تجديد انتظار الايدي حتى لو ضغط على الزر، يقدر يرسل الايدي بعدها براحته
+    bot.clear_step_handler_by_chat_id(call.message.chat.id)
+    bot.register_next_step_handler(call.message, process_add_user)
 
 def process_add_user(message):
-    # إذا ضغط المشرف على زر الرجوع أو زر آخر، قد نحتاج لتجنب معالجة النص كأيدي
-    if not message.text or not message.text.strip().isdigit():
-        # إذا كان النص ليس رقماً، نتجاهل المعالجة (ليتمكن المستخدم من استخدام الأزرار)
-        return 
-
     if message.from_user.id not in ADMIN_IDS: return
-    
+    # تمت إضافة التحقق if not message.text فقط عشان ما يهنق البوت لو أرسل ملصق بالغلط
+    if not message.text or not message.text.strip().isdigit(): 
+        return bot.send_message(message.chat.id, "❌ ايـدي غـيـر صـحـيـح.")
     target_id = int(message.text.strip())
     add_allowed_user(target_id, "Added")
-    bot.send_message(message.chat.id, f"✅ تـم إضـافـة {target_id} بـنـجـاح!", parse_mode="Markdown", reply_markup=home_keyboard(message.from_user.id))
+    bot.send_message(message.chat.id, f"✅ تـم إضـافـة `{target_id}` بـنـجـاح!", parse_mode="Markdown", reply_markup=home_keyboard(message.from_user.id))
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_ban_user")
 def admin_ban_user_menu(call):
@@ -1690,8 +1672,7 @@ def admin_ban_user_menu(call):
     users = get_all_allowed_users()
     markup = InlineKeyboardMarkup()
     if users:
-        for uid, fname in users: 
-            markup.row(InlineKeyboardButton(f"{fname} | {uid}", callback_data=f"ban_{uid}"))
+        for uid, fname in users: markup.row(InlineKeyboardButton(f"{fname} | {uid}", callback_data=f"ban_{uid}"))
     markup.row(InlineKeyboardButton("🔥 حظـر الـجـمـيـع", callback_data="ban_all_users"))
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
     bot.edit_message_text("🛂┊ حظـر الـمـسـتـخـدمـيـن:\n⎉╎ اخـتـر مـسـتـخـدمـاً لـحـظـره:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
