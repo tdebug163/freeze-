@@ -801,38 +801,110 @@ def back_home(call):
     if call.from_user.id in USER_STATES: del USER_STATES[call.from_user.id]
     bot.edit_message_text("🛂┊ الـقـائـمـة الـرئـيـسـيـة:", call.message.chat.id, call.message.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import html  # مكتبة مدمجة في بايثون لتنظيف النصوص وتجنب أخطاء التنسيق
+import time
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 @bot.callback_query_handler(func=lambda call: call.data == "reveal_accounts")
 def reveal_accounts(call):
-    if not is_allowed(call.from_user.id): return
-    accounts = get_all_accounts(call.from_user.id)
+    if not is_allowed(call.from_user.id): 
+        return
     
+    accounts = get_all_accounts(call.from_user.id)
+
     if not accounts: 
         return bot.answer_callback_query(call.id, "لا توجد حسابات مسجلة!", show_alert=True)
-    
+
     bot.answer_callback_query(call.id, "⏳ جاري تجهيز كشف الحسابات...")
-    
-    # تحديد عدد الحسابات في كل رسالة (15 حساب رقم آمن جداً لضمان عدم تجاوز الحد)
+
+    # تقسيم الحسابات إلى دفعات (15 حساب في كل رسالة لتجنب تخطي الحد الأقصى لطول الرسالة)
     batch_size = 15
     account_batches = [accounts[i:i + batch_size] for i in range(0, len(accounts), batch_size)]
     total_accounts = len(accounts)
-    
+
     for index, batch in enumerate(account_batches):
         if index == 0:
-            text = f"🛂┊ كشـف الحـسـابات -\n\n⎉╎ تم العثور على {total_accounts} حـسـاب\n\n"
+            text = f"<b>🛂┊ كشـف الحـسـابات -</b>\n\n<b>⎉╎ تم العثور على {total_accounts} حـسـاب</b>\n\n"
         else:
-            text = f"🛂┊ تـكـمـلـة الـحـسـابـات (الـجـزء {index + 1}):\n\n"
-            
-        for acc_id, phone, name, uid, _ in batch:
-            text += f"▪️ الـرقـم: {phone}\n▪️ الاسـم: {name}\n▪️ الآيـدي: {uid}\n▪️ سـنـة الإنـشـاء: {get_creation_year(uid)}\n〰️〰️〰️〰️〰️〰️〰️〰️\n"
-        
+            text = f"<b>🛂┊ تـكـمـلـة الـحـسـابـات (الـجـزء {index + 1}):</b>\n\n"
+
+        for account in batch:
+            # تفكيك عناصر الحساب بأمان لتجنب توقف الدالة في حال تغير عدد الأعمدة في قاعدة البيانات
+            try:
+                acc_id = account[0] if len(account) > 0 else "غير معروف"
+                phone = account[1] if len(account) > 1 else "غير معروف"
+                name = account[2] if len(account) > 2 else "بلا اسم"
+                uid = account[3] if len(account) > 3 else "غير معروف"
+            except Exception:
+                continue  # تخطي هذا الحساب فقط إذا حدث خطأ غير متوقع في قراءة بياناته
+
+            # تنظيف النصوص القادمة من قاعدة البيانات لتجنب أخطاء تنسيق HTML في التليجرام
+            safe_phone = html.escape(str(phone))
+            safe_name = html.escape(str(name))
+            safe_uid = html.escape(str(uid))
+
+            # جلب سنة الإنشاء مع معالجة الأخطاء لضمان عدم توقف الدالة
+            try:
+                creation_year = get_creation_year(uid)
+            except Exception:
+                creation_year = "غير معروف"
+
+            # تركيب نص الحساب بتنسيق HTML آمن
+            text += (
+                f"▪️ <b>الـرقـم:</b> {safe_phone}\n"
+                f"▪️ <b>الاسـم:</b> {safe_name}\n"
+                f"▪️ <b>الآيـدي:</b> {safe_uid}\n"
+                f"▪️ <b>سـنـة الإنـشـاء:</b> {creation_year}\n"
+                f"〰️〰️〰️〰️〰️〰️〰️〰️\n"
+            )
+
         is_last_batch = (index == len(account_batches) - 1)
         markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home")) if is_last_batch else None
-        
-        if index == 0:
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-        else:
-            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
-            time.sleep(0.3)
+
+        try:
+            if index == 0:
+                bot.edit_message_text(
+                    text, 
+                    call.message.chat.id, 
+                    call.message.message_id, 
+                    reply_markup=markup, 
+                    parse_mode="HTML"
+                )
+            else:
+                bot.send_message(
+                    call.message.chat.id, 
+                    text, 
+                    reply_markup=markup, 
+                    parse_mode="HTML"
+                )
+                time.sleep(0.3)
+        except Exception as e:
+            # طباعة الخطأ في الكونسول لتسهيل تتبعه وتجنب انهيار البوت كاملاً
+            print(f"حدث خطأ أثناء إرسال الدفعة {index}: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == "view_sessions_menu")
 def view_sessions_menu(call):
