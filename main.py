@@ -747,9 +747,6 @@ def home_keyboard(uid):
     return markup
 
 
-
-
-
 import asyncio
 import re
 import time
