@@ -745,58 +745,63 @@ def home_keyboard(uid):
         markup.row(InlineKeyboardButton("• تـدمـيـر وحـذف الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
 
     return markup
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import asyncio
 import re
 import time
 from pyrogram import Client
 from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
-from pyrogram.raw.types import EmailVerifyPurposeLoginSetup  # ✅ تصحيح الاستيراد
-from pyrogram.errors import FloodWait
-
-DEFAULT_TEMP_MAIL_SESSION = "BAG3abEApn9HAeUDClfSg0Yr3ayAz-xleU2bL19tQq3hpCHKUSUXxhMa7pwhyVQ2-puKcgL9gZmOfBJDblYBeGmf1Gx1cVT2dFmdlc264OLbPYTNilnPpBXgLthMNjfaeCSqUkzJZhTYMWCMKSwivuO7WqZ7X9l_REJMSDQKRfVgyucr2QOKpm2MWjI9SM9FMcbV_CY1Pmq7S9OiFM4a7gt0JMyG_cwZumiCJwfYV1y7lCjaYqDNYN8vU8nv5To8X2u5LzGqi2ssMhWjWoOT5E4jqgH8RPy9_e6W2VRMQStebxoziBOc_XNvJjagZIAjulB445efkGDPFanhiiIcmq3LPpNGVQAAAAAAAAAAAA"
-
-CUSTOM_WORKERS = {}
+from pyrogram.raw.types import EmailVerifyPurposeLoginSetup, EmailVerificationCode  # ✅ إضافة EmailVerificationCode
+from pyrogram.errors import FloodWait, RPCError
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ==========================================
-# 🛠 واجهات أتمتة الإيميل
-# ==========================================
-# (الدوال الخاصة بالأزرار والقوائم تبقى كما هي عندك لم أمسحها)
-
-# ==========================================
-# ⚙️ محركات TempMail الذكية (كما هي لم يتم العبث بها)
+# ⚙️ محركات TempMail الذكية
 # ==========================================
 
 async def fetch_temp_mail(worker_client):
     """دالة للتواصل مع البوت وتوليد إيميل جديد عبر /start"""
     try:
         await worker_client.send_message("TempMail_org_bot", "/start")
-        # محاولة البحث عن الإيميل خلال 6 ثوانٍ
-        for _ in range(3):
+        # محاولة البحث عن الإيميل خلال 10 ثوانٍ (5 محاولات)
+        for _ in range(5):
             await asyncio.sleep(2)
-            async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=2):
+            async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=3):
                 if msg.text and ("@" in msg.text):
-                    match = re.search(r'([a-zA-Z0-9.-]+@[a-zA-Z0-9.-]+.[a-zA-Z0-9_-]+)', msg.text)
+                    # ✅ تصحيح الريجيكس لجلب الإيميل بدقة
+                    match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', msg.text)
                     if match:
-                        return match.group(1)
-    except Exception:
-        pass
+                        return match.group(0)
+    except Exception as e:
+        print(f"Error in fetch_temp_mail: {e}")
     return None
 
 async def wait_for_email_code(worker_client, last_msg_id):
-    """دالة انتظار الكود تعتمد على آيدي الرسالة لتجنب مشاكل التوقيت (Race Condition)"""
-    for _ in range(15):  # أقصى انتظار 30 ثانية
+    """دالة انتظار الكود تعتمد على آيدي الرسالة لتجنب مشاكل التوقيت"""
+    for _ in range(20):  # أقصى انتظار 40 ثانية
         await asyncio.sleep(2)
         async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=5):
-            # نقرأ فقط الرسائل الجديدة التي وردت بعد طلب الكود
             if msg.id > last_msg_id and msg.text:
-                # \b تضمن التقاط رقم من 5 أو 6 خانات فقط (ليس جزء من رقم هاتف أو آيدي)
                 match = re.search(r'\b(\d{5,6})\b', msg.text)
                 if match:
                     return match.group(1)
     return None
 
 # ==========================================
-# 🚀 محرك العمل المتوازي (Workers Engine - مصحح برمجياً)
+# 🚀 محرك العمل المتوازي (Workers Engine)
 # ==========================================
 
 async def email_changer_worker(worker_session, target_queue, status_data):
@@ -822,7 +827,7 @@ async def email_changer_worker(worker_session, target_queue, status_data):
                 target_queue.task_done()
                 continue
             
-            # تسجيل آخر رسالة للعامل قبل إرسال الكود (علامة مرجعية بدل الوقت)
+            # تسجيل آخر رسالة للعامل قبل إرسال الكود
             history = [msg async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=1)]
             last_msg_id = history[0].id if history else 0
                 
@@ -836,7 +841,11 @@ async def email_changer_worker(worker_session, target_queue, status_data):
                 if not code:
                     raise Exception("لم يصل الكود للإيميل")
                     
-                await target_client.invoke(VerifyEmail(email=new_email, purpose=EmailVerifyPurposeLoginSetup(), verification=code))
+                # 🔥 التصحيح الجوهري: يجب تمرير EmailVerificationCode وليس النص المباشر
+                await target_client.invoke(VerifyEmail(
+                    purpose=EmailVerifyPurposeLoginSetup(), 
+                    verification=EmailVerificationCode(code=code)
+                ))
                 
                 status_data['success'] += 1
                 status_data['log'].append(f"✅ {target_phone}: تم التغيير لـ `{new_email}`")
@@ -844,8 +853,7 @@ async def email_changer_worker(worker_session, target_queue, status_data):
             except FloodWait as e:
                 status_data['failed'] += 1
                 status_data['log'].append(f"❌ {target_phone}: محظور ({e.value}s)")
-            except Exception as e:
-                # 🔥 كشف الخطأ الحقيقي بالتفصيل المطلوب بدل إخفائه
+            except RPCError as e:
                 err_str = str(e).upper()
                 if "EMAIL_INVALID" in err_str:
                     reason = "🚫 الإيميل غير مدعوم/الدومين محظور"
@@ -856,10 +864,13 @@ async def email_changer_worker(worker_session, target_queue, status_data):
                 elif "EMAIL_NOT_ALLOWED" in err_str:
                     reason = "🔒 تيليجرام يرفض هذا الإيميل"
                 else:
-                    reason = f"❌ خطأ برمجي: {str(e)[:100]}" # هنا يطبع الخطأ الحقيقي بريندر
+                    reason = f"❌ خطأ تيليجرام: {str(e)}"
                 
                 status_data['failed'] += 1
                 status_data['log'].append(f"❌ {target_phone}: {reason}")
+            except Exception as e:
+                status_data['failed'] += 1
+                status_data['log'].append(f"❌ {target_phone}: خطأ برمجي: {str(e)}")
             finally:
                 if target_client.is_connected:
                     await target_client.disconnect()
@@ -869,7 +880,7 @@ async def email_changer_worker(worker_session, target_queue, status_data):
         except asyncio.QueueEmpty:
             break
         except Exception as e:
-            status_data['log'].append(f"❌ خطأ عام بالمعالجة: {str(e)[:50]}")
+            status_data['log'].append(f"❌ خطأ عام بالمعالجة: {str(e)}")
             target_queue.task_done()
             
     if worker_client.is_connected:
@@ -907,7 +918,7 @@ async def live_progress_updater(chat_id, msg_id, status_data):
         await asyncio.sleep(2)
 
 # ==========================================
-# 🟢 دالة التشغيل (كما هي مع تعديل بسيط لضمان الاستقرار)
+# 🟢 دالة التشغيل الرئيسية
 # ==========================================
 
 async def run_email_automation(chat_id, msg_id, accounts, worker_sessions):
@@ -952,7 +963,10 @@ async def run_email_automation(chat_id, msg_id, accounts, worker_sessions):
     except Exception:
         bot.send_message(chat_id, final_text, reply_markup=markup)
 
-# استدعاء دالة التشغيل من زر البدء يبقى عندك كما هو
+
+
+
+
 
 
 
