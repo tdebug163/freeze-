@@ -1055,6 +1055,13 @@ async def wait_for_email_code(worker_client, last_msg_id):
         logging.error(f"❌ مراقب [wait_for_email_code]: {e}\n{traceback.format_exc()}")
         return None
 
+
+
+
+
+
+
+
 # ==========================================
 # ⚙️ العامل (Worker Engine)
 # ==========================================
@@ -1090,9 +1097,18 @@ async def email_changer_worker(worker_session, target_queue, status_data):
             await target_client.connect()
             logging.info(f"✅ تم الاتصال بحساب الهدف: {target_phone}")
             
-            # 3. إرسال طلب الكود
+            # 3. إرسال طلب الكود (تم إصلاح الخطأ هنا بإضافة phone_number و phone_code_hash)
             logging.info(f"ℹ️ إرسال طلب SendVerifyEmailCode للرقم {target_phone} بالإيميل {new_email}...")
-            await target_client.invoke(SendVerifyEmailCode(email=new_email, purpose=EmailVerifyPurposeLoginSetup()))
+            
+            # لاحظ إضافة phone_number و phone_code_hash للتوافق مع Layer 158
+            await target_client.invoke(SendVerifyEmailCode(
+                email=new_email, 
+                purpose=EmailVerifyPurposeLoginSetup(
+                    phone_number=target_phone, 
+                    phone_code_hash="" # نمرر فارغ لأننا لسنا في مرحلة تسجيل دخول جديدة
+                )
+            ))
+            
             logging.info(f"✅ تم إرسال الطلب بنجاح لـ {target_phone}")
             
             # 4. انتظار الكود
@@ -1101,10 +1117,13 @@ async def email_changer_worker(worker_session, target_queue, status_data):
             if not code:
                 raise Exception("لم يصل الكود من الإيميل خلال الوقت المحدد")
                 
-            # 5. تأكيد الكود
+            # 5. تأكيد الكود (تم إصلاح الخطأ هنا أيضاً)
             logging.info(f"ℹ️ جاري تأكيد الكود {code} للرقم {target_phone}...")
             await target_client.invoke(VerifyEmail(
-                purpose=EmailVerifyPurposeLoginSetup(), 
+                purpose=EmailVerifyPurposeLoginSetup(
+                    phone_number=target_phone, 
+                    phone_code_hash=""
+                ), 
                 verification=EmailVerificationCode(code=code)
             ))
             
@@ -1141,6 +1160,17 @@ async def email_changer_worker(worker_session, target_queue, status_data):
         
     logging.info("⚠️ انتهى عمل أحد العمال.")
     status_data['log'].append("⚠️ انتهى عمل أحد العمال.")
+
+
+
+
+
+
+
+
+
+
+
 
 # ==========================================
 # 📊 واجهة التقدم المباشر
