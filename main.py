@@ -43,6 +43,9 @@ from pyrogram import Client
 from pyrogram.enums import ChatType
 from pyrogram.errors import (FloodWait, AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan, PasswordHashInvalid, BadRequest, SessionPasswordNeeded)
 from pyrogram.raw import functions, types
+from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
+from pyrogram.raw.types import EmailVerifyPurposeLoginSetup
+# (تم استخدام FloodWait وهي موجودة لديك مسبقاً في الملف)
 
 from telethon.sessions import StringSession
 from telethon.crypto import AuthKey
