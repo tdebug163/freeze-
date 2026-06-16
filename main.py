@@ -746,42 +746,43 @@ def home_keyboard(uid):
 
     return markup
 
-
 import asyncio
 import re
 import time
 from pyrogram import Client
 from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
-from pyrogram.raw.types import EmailVerifyPurposeLoginSetup  # ✅ الاستدعاء الصحيح
+from pyrogram.raw.types import EmailVerifyPurposeLoginSetup
 from pyrogram.errors import FloodWait
 
 # ==========================================
-# ⚙️ محركات TempMail الذكية (محدثة)
+# ⚙️ محركات TempMail الذكية (محدثة - ضغط الأزرار مصحح)
 # ==========================================
 
 async def fetch_temp_mail(worker_client):
-    """دالة جلب إيميل جديد مع التأكد من الضغط على زر التجديد إن وجد"""
+    """دالة جلب إيميل جديد مع الضغط الصحيح على زر التجديد"""
     try:
-        # نجلب آخر رسالة لمعرفة آخر آيدي
+        # 1. نسجل آخر رسالة قبل أي إجراء
         history = [msg async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=1)]
         last_msg_id = history[0].id if history else 0
         
-        # نرسل /start أو نضغط على زر الجديد إن كان موجود
+        # 2. نرسل /start لطلب إيميل جديد
         await worker_client.send_message("TempMail_org_bot", "/start")
+        await asyncio.sleep(3)
         
-        # ننتظر قليلاً ثم نفحص الأزرار إن وجدت
-        await asyncio.sleep(2)
-        async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=1):
-            if msg.reply_markup and msg.reply_markup.inline_keyboard:
-                try:
-                    # نضغط على أول زر (عادة يكون زر إيميل جديد أو نسخ)
-                    await msg.reply_markup.inline_keyboard[0][0].click()
-                    await asyncio.sleep(2)  # ننتظر بعد الضغط
-                except:
-                    pass
+        # 3. نفحص الرسائل الجديدة عشان نضغط على زر الإيميل الجديد إن وجد
+        async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=3):
+            if msg.id > last_msg_id:
+                if msg.reply_markup:
+                    try:
+                        # ✅ الطريقة الصحيحة للضغط على أول زر في الصف الأول
+                        await msg.click(0, 0)
+                        await asyncio.sleep(3)  # ننتظر بعد الضغط عشان البوت يستجيب
+                        break  # نخرج من اللوب بعد الضغط
+                    except Exception:
+                        pass
 
-        # البحث عن الإيميل في الرسائل الجديدة فقط (التي آيديها أكبر من last_msg_id)
-        for _ in range(5):  # 5 محاولات (10 ثواني)
+        # 4. البحث عن الإيميل في الرسائل الجديدة بعد الضغط
+        for _ in range(5):  # 5 محاولات
             await asyncio.sleep(2)
             async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=5):
                 if msg.id > last_msg_id and msg.text and ("@" in msg.text):
@@ -793,11 +794,10 @@ async def fetch_temp_mail(worker_client):
     return None
 
 async def wait_for_email_code(worker_client, last_msg_id):
-    """دالة انتظار الكود تعتمد على رسائل الآيدي وليس الوقت لتجنب التضارب"""
+    """دالة انتظار الكود تعتمد على رسائل الآيدي"""
     for _ in range(15):  # أقصى انتظار 30 ثانية
         await asyncio.sleep(2)
         async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=5):
-            # نقرأ فقط الرسائل الجديدة التي وردت بعد طلب الكود
             if msg.id > last_msg_id and msg.text:
                 match = re.search(r'\b(\d{5,6})\b', msg.text)
                 if match:
@@ -809,7 +809,6 @@ async def wait_for_email_code(worker_client, last_msg_id):
 # ==========================================
 
 async def email_changer_worker(worker_session, target_queue, status_data):
-    # تهيئة العامل (Worker) مرة واحدة وتوصيله
     worker_client = Client(f"wk_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=worker_session, in_memory=True)
     try:
         await worker_client.connect()
@@ -824,7 +823,7 @@ async def email_changer_worker(worker_session, target_queue, status_data):
             
             status_data['log'].append(f"⏳ جاري معالجة {target_phone}...")
             
-            # 1. جلب الإيميل الجديد عبر العامل
+            # 1. جلب الإيميل الجديد
             new_email = await fetch_temp_mail(worker_client)
             if not new_email:
                 status_data['failed'] += 1
@@ -832,24 +831,24 @@ async def email_changer_worker(worker_session, target_queue, status_data):
                 target_queue.task_done()
                 continue
 
-            # 2. تسجيل آخر رسالة للعامل قبل إرسال الكود (علامة مرجعية)
+            # 2. تسجيل آخر رسالة للعامل قبل إرسال الكود
             history = [msg async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=1)]
             last_msg_id = history[0].id if history else 0
 
-            # 3. فتح حساب الهدف وإرسال طلب الكود عبر Raw API
+            # 3. فتح حساب الهدف وإرسال طلب الكود
             target_client = Client(f"tg_{target_id}_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=target_session, in_memory=True)
             try:
                 await target_client.connect()
                 
-                # أمر إرسال الكود لتغيير إيميل الدخول (Raw API)
+                # إرسال طلب الكود لتغيير إيميل الدخول
                 await target_client.invoke(SendVerifyEmailCode(email=new_email, purpose=EmailVerifyPurposeLoginSetup()))
                 
-                # 4. انتظار الكود
+                # 4. انتظار الكود من بوت الإيميل المؤقت
                 code = await wait_for_email_code(worker_client, last_msg_id)
                 if not code:
                     raise Exception("لم يصل الكود للإيميل")
                     
-                # 5. التحقق وتغيير الإيميل (Raw API)
+                # 5. التحقق وتغيير الإيميل
                 await target_client.invoke(VerifyEmail(email=new_email, purpose=EmailVerifyPurposeLoginSetup(), verification=code))
                 
                 status_data['success'] += 1
@@ -862,16 +861,15 @@ async def email_changer_worker(worker_session, target_queue, status_data):
                 # 🔥 كشف الخطأ الحقيقي بالتفصيل
                 err_str = str(e).upper()
                 if "EMAIL_INVALID" in err_str:
-                    reason = "🚫 تيليجرام رفض الإيميل (الدومين محظور أو غير مدعوم)"
+                    reason = "🚫 تيليجرام رفض الإيميل (الدومين محظور)"
                 elif "EMAIL_OCCUPIED" in err_str:
                     reason = "⚠️ الإيميل مستخدم بحساب آخر"
                 elif "EMAIL_VERIFY_EXPIRED" in err_str:
                     reason = "⏳ انتهت صلاحية الكود"
                 elif "EMAIL_NOT_ALLOWED" in err_str:
-                    reason = "🔒 تيليجرام لا يسمح بهذا الإيميل (محظور)"
+                    reason = "🔒 تيليجرام لا يسمح بهذا الإيميل"
                 else:
-                    # هنا يطبع لك الخطأ الفعلي من تيليجرام عشان تفهم وش يبي بالضبط
-                    reason = f"❌ خطأ من تيليجرام: {str(e)[:100]}" 
+                    reason = f"❌ خطأ: {str(e)[:100]}" 
                 
                 status_data['failed'] += 1
                 status_data['log'].append(f"❌ {target_phone}: {reason}")
@@ -884,12 +882,13 @@ async def email_changer_worker(worker_session, target_queue, status_data):
         except asyncio.QueueEmpty:
             break
         except Exception as e:
-            status_data['log'].append(f"❌ خطأ عام بالمعالجة: {str(e)[:50]}")
+            status_data['log'].append(f"❌ خطأ عام: {str(e)[:50]}")
             target_queue.task_done()
             
-    # إغلاق العامل بعد انتهاء العمل
     if worker_client.is_connected:
         await worker_client.disconnect()
+
+
 
 
 
