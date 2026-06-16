@@ -829,6 +829,21 @@ def home_keyboard(uid):
 
     return markup
 
+
+
+
+import asyncio
+import re
+import time
+import traceback
+import threading
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram import Client
+from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
+from pyrogram.raw.types import EmailVerifyPurposeLoginSetup, EmailVerificationCode
+from pyrogram.errors import FloodWait, RPCError
+
 # ==========================================
 # 🚨 مراقب الأخطاء الشامل
 # ==========================================
@@ -841,6 +856,15 @@ def log_error(error, context=""):
     traceback.print_exc()
     print("="*50 + "\n")
 
+def get_worker_sessions():
+    """دالة حقيقية تعتمد على المتغيرات العامة لديك"""
+    workers = []
+    if 'DEFAULT_TEMP_MAIL_SESSION' in globals() and DEFAULT_TEMP_MAIL_SESSION:
+        workers.append(DEFAULT_TEMP_MAIL_SESSION)
+    if 'CUSTOM_WORKERS' in globals() and isinstance(CUSTOM_WORKERS, dict):
+        workers.extend(list(CUSTOM_WORKERS.values()))
+    return workers
+
 # ==========================================
 # 📡 معالج زر الإيميل (مصحح لـ TeleBot)
 # ==========================================
@@ -850,23 +874,23 @@ def auto_email_menu_handler(call):
         uid = call.from_user.id
         print(f"ℹ️ المستخدم {uid} ضغط على زر أتمتة الإيميل")
         bot.answer_callback_query(call.id, "⏳ جاري التحضير...")
-        
+
         # تشغيل المهمة في Thread منفصل لعدم تعليق البوت
         def run_async_task():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                # استدعاء الدوال الخاصة بك (إذا كانت async استخدم await داخل الكوروتين)
-                accounts = loop.run_until_complete(get_user_accounts(uid))
-                worker_sessions = loop.run_until_complete(get_worker_sessions())
-                
+                # ✅ استخدام الدالة الحقيقية الموجودة في سكربتك
+                accounts = get_all_accounts(uid)
+                worker_sessions = get_worker_sessions()
+
                 if not accounts:
                     bot.edit_message_text("❌ لا توجد حسابات متاحة للتغيير.", call.message.chat.id, call.message.message_id)
                     return
                 if not worker_sessions:
                     bot.edit_message_text("❌ لا توجد حسابات مساعدة (Workers) متاحة.", call.message.chat.id, call.message.message_id)
                     return
-                    
+
                 loop.run_until_complete(run_email_automation(
                     call.message.chat.id,
                     call.message.message_id,
@@ -877,9 +901,9 @@ def auto_email_menu_handler(call):
                 log_error(e, "run_async_task")
             finally:
                 loop.close()
-                
+
         threading.Thread(target=run_async_task).start()
-        
+
     except Exception as e:
         log_error(e, "auto_email_menu_handler")
         try:
@@ -945,38 +969,39 @@ async def email_changer_worker(worker_session, target_queue, status_data):
         target_client = None
         try:
             target_data = target_queue.get_nowait()
+            # البيانات ترجع كـ Tuple: (id, phone, first_name, user_id, pyro_session)
             target_id, target_phone, target_session = target_data
-            
+
             status_data['log'].append(f"⏳ جاري معالجة {target_phone}...")
-            
+
             new_email = await fetch_temp_mail(worker_client)
             if not new_email:
                 status_data['failed'] += 1
                 status_data['log'].append(f"❌ {target_phone}: فشل جلب إيميل")
                 target_queue.task_done()
                 continue
-            
+
             history = [msg async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=1)]
             last_msg_id = history[0].id if history else 0
-            
+
             try:
                 target_client = Client(f"tg_{target_id}_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=target_session, in_memory=True)
                 await target_client.connect()
-                
+
                 await target_client.invoke(SendVerifyEmailCode(email=new_email, purpose=EmailVerifyPurposeLoginSetup()))
-                
+
                 code = await wait_for_email_code(worker_client, last_msg_id)
                 if not code:
                     raise Exception("لم يصل الكود للإيميل")
-                    
+
                 await target_client.invoke(VerifyEmail(
                     purpose=EmailVerifyPurposeLoginSetup(), 
                     verification=EmailVerificationCode(code=code)
                 ))
-                
+
                 status_data['success'] += 1
                 status_data['log'].append(f"✅ {target_phone}: تم التغيير لـ `{new_email}`")
-                
+
             except FloodWait as e:
                 status_data['failed'] += 1
                 status_data['log'].append(f"❌ {target_phone}: محظور ({e.value}s)")
@@ -987,7 +1012,7 @@ async def email_changer_worker(worker_session, target_queue, status_data):
                 elif "EMAIL_VERIFY_EXPIRED" in err_str: reason = "⏳ انتهت صلاحية الكود"
                 elif "EMAIL_NOT_ALLOWED" in err_str: reason = "🔒 تيليجرام يرفض الإيميل"
                 else: reason = f"❌ خطأ: {str(e)[:80]}"
-                
+
                 status_data['failed'] += 1
                 status_data['log'].append(f"❌ {target_phone}: {reason}")
             except Exception as e:
@@ -997,20 +1022,20 @@ async def email_changer_worker(worker_session, target_queue, status_data):
             finally:
                 if target_client and target_client.is_connected:
                     await target_client.disconnect()
-            
+
             target_queue.task_done()
-            
+
         except asyncio.QueueEmpty:
             break
         except Exception as e:
             log_error(e, "worker_loop")
             target_queue.task_done()
-            
+
     if worker_client and worker_client.is_connected:
         await worker_client.disconnect()
 
 # ==========================================
-# 📊 محدث التقدم المباشر (مصحح لـ TeleBot)
+# 📊 محدث التقدم المباشر
 # ==========================================
 async def live_progress_updater(chat_id, msg_id, status_data):
     last_text = ""
@@ -1024,7 +1049,7 @@ async def live_progress_updater(chat_id, msg_id, status_data):
             filled = int(percent / 10)
             bar = "🟩" * filled + "⬜️" * (10 - filled)
             recent_logs = "\n".join(status_data['log'][-6:])
-            
+
             text = (
                 f"🔄 **جاري تغيير الإيميلات...**\n\n"
                 f"📊 **التقدم:** {bar} {percent}%\n"
@@ -1033,14 +1058,14 @@ async def live_progress_updater(chat_id, msg_id, status_data):
                 f"━━━━━━━━━━━━━━━━\n"
                 f"📡 **السجل:**\n{recent_logs}"
             )
-            
+
             if text != last_text:
                 try:
                     bot.edit_message_text(text, chat_id, msg_id)
                     last_text = text
                 except:
                     pass
-                
+
             await asyncio.sleep(2)
         except Exception as e:
             log_error(e, "progress_updater")
@@ -1051,10 +1076,10 @@ async def live_progress_updater(chat_id, msg_id, status_data):
 async def run_email_automation(chat_id, msg_id, accounts, worker_sessions):
     try:
         print(f"🚀 بدء الأتمتة لـ {len(accounts)} حساب")
-        
         queue = asyncio.Queue()
         for acc in accounts:
-            queue.put_nowait((acc[0], acc[1], acc[4])) # (id, phone, session)
+            # ✅ نمرر (id, phone, pyro_session) للطابور
+            queue.put_nowait((acc[0], acc[1], acc[4]))
 
         status_data = {
             'total': len(accounts),
@@ -1070,12 +1095,12 @@ async def run_email_automation(chat_id, msg_id, accounts, worker_sessions):
         for w_session in worker_sessions:
             task = asyncio.create_task(email_changer_worker(w_session, queue, status_data))
             worker_tasks.append(task)
-        
+
         await queue.join()
 
         for task in worker_tasks:
             task.cancel()
-            
+
         status_data['done'] = True
         await asyncio.sleep(1)
 
@@ -1092,9 +1117,9 @@ async def run_email_automation(chat_id, msg_id, accounts, worker_sessions):
             bot.edit_message_text(final_text, chat_id, msg_id, reply_markup=markup)
         except:
             bot.send_message(chat_id, final_text, reply_markup=markup)
-            
+
     except Exception as e:
-        log_error(e, "run_email_automation")
+        log_error(e, "run_email_automation") 
 
 
 
