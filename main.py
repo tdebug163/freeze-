@@ -750,21 +750,16 @@ def home_keyboard(uid):
 
 
 
-
-
-
-
-
 import asyncio
 import re
 import time
 from pyrogram import Client
 from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
-from pyrogram.raw.types.account import EmailVerifyPurposeLoginSetup
+from pyrogram.raw.types import EmailVerifyPurposeLoginSetup  # ✅ الاستدعاء الصحيح
 from pyrogram.errors import FloodWait
 
 # ==========================================
-# ⚙️ محركات TempMail الذكية (محدثة - نظام تتبع الآيدي)
+# ⚙️ محركات TempMail الذكية (محدثة)
 # ==========================================
 
 async def fetch_temp_mail(worker_client):
