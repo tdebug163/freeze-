@@ -378,7 +378,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # ==========================================
 # ⚙️ إعدادات LZT Market و مدير المهام
 # ==========================================
-LZT_API_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOjEwNjEwNDg5LCJpc3MiOiJsenQiLCJpYXQiOjE3ODE4NDcxMzgsImp0aSI6Ijk4NzQ2NyIsInNjb3BlIjoiYmFzaWMgcmVhZCBwb3N0IGNvbnZlcnNhdGUgcGF5bWVudCBpbnZvaWNlIGNoYXRib3ggbWFya2V0IiwiZXhwIjoxOTM5NTI3MTM4fQ.Qqte_KIhI-qFerSO1blM-X9Vue3UEjY_DYQNxO90Vi0hposjPXJtTKlNrQ0sZgXlh42iFgrQa-j6ePQBz2nU4S9KlHRpmlxGBnMoeKAUm-h_hv-F5rBRocynWmarOTzDnFCgoFaW0ovFlOplEFV7JJ5_KE6cjyJfXJWH0Ucn5PY"  # ⚠️ ضع التوكن الخاص بك هنا
+LZT_API_TOKEN = "ضع_توكن_LZT_هنا"  # ⚠️ ضع التوكن الخاص بك هنا
 LZT_HEADERS = {"Authorization": f"Bearer {LZT_API_TOKEN}", "Accept": "application/json"}
 
 ACTIVE_SNIPERS = {} 
@@ -550,7 +550,7 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
     if task_id in ACTIVE_SNIPERS:
         del ACTIVE_SNIPERS[task_id]
         if bought_count >= target_count:
-            bot.send_message(admin_id, f"🏁 **اكتملت المهمة:** `{task_name}`\nوصلنا للعدد المطلوب: {target_count}")
+            bot.send_message(admin_id, f"🏁 **اكتملت المهمة:** `{task_name}`\nالعدد الذي تم صيده: {bought_count}")
 
 def start_sniper_background(admin_id, task_name, filters, target_count=1, required_hours=0):
     task_id = f"task_{int(time.time())}_{admin_id}"
@@ -593,6 +593,30 @@ def lzt_menu_handler(call):
     )
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=lzt_main_keyboard(), parse_mode="Markdown")
 
+# 🟢 إصلاح أزرار الصيد السريع
+@bot.callback_query_handler(func=lambda call: call.data in ["lzt_id8", "lzt_id9", "lzt_iraq"])
+def quick_sniper_handlers(call):
+    if not is_allowed(call.from_user.id): return
+    uid = call.from_user.id
+    
+    bot.answer_callback_query(call.id, "🚀 تم إطلاق القناص السريع في الخلفية!", show_alert=True)
+    
+    # فلاتر أساسية مشتركة للصيد السريع
+    base_filters = {"pmin": 0.1, "pmax": 0.4, "spam": "no", "password": "no", "order_by": "pdate_to_up"}
+    
+    if call.data == "lzt_id8":
+        task_name = "🎯 صيد ID 8 السريع"
+        filters = {**base_filters, "dig_min": 8, "dig_max": 8}
+    elif call.data == "lzt_id9":
+        task_name = "🕰️ صيد ID 9 السريع"
+        filters = {**base_filters, "dig_min": 9, "dig_max": 9}
+    elif call.data == "lzt_iraq":
+        task_name = "🇮🇶 صيد العراق 8-9"
+        filters = {**base_filters, "dig_min": 8, "dig_max": 9, "country[]": "IQ"}
+        
+    start_sniper_background(uid, task_name, filters, target_count=5, required_hours=0) # الافتراضي شراء 5 حسابات
+    lzt_menu_handler(call) # تحديث القائمة لإظهار زر الإيقاف
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lzt_stop:"))
 def lzt_stop_task(call):
     if not is_allowed(call.from_user.id): return
@@ -607,9 +631,10 @@ def lzt_stop_task(call):
 # 👑 لوحة التخصيص المتقدم واستكشاف الحسابات
 # ==========================================
 def boss_menu_markup(uid):
+    # استخدام الإعدادات المحفوظة أو تعيين القيم الافتراضية المطلوبة
     state = USER_STATES.get(uid, {}).get("boss_filters", {
-        "pmin": "0.1", "pmax": "3.0", "country": "الكل", "dig_min": "8", "dig_max": "9",
-        "hours": "12", "order": "pdate_to_up", "2fa": "no", "spam": "no"
+        "pmin": "0.1", "pmax": "0.4", "country": "الكل", "dig_min": "8", "dig_max": "9",
+        "hours": "12", "order": "pdate_to_up", "2fa": "no", "spam": "no", "target_count": "1"
     })
     
     order_label = "الأقدم أولاً 🕰️" if state['order'] == "pdate_to_up" else "الأرخص أولاً ⬇️"
@@ -623,7 +648,10 @@ def boss_menu_markup(uid):
         InlineKeyboardButton(f"الدولة: {state['country']}", callback_data="boss_edit:country"),
         InlineKeyboardButton(f"الآيدي: {state['dig_min']}-{state['dig_max']}", callback_data="boss_edit:digits")
     )
-    markup.row(InlineKeyboardButton(f"🕰️ وقت النشر: +{state['hours']} ساعة", callback_data="boss_edit:hours"))
+    markup.row(
+        InlineKeyboardButton(f"🕰️ وقت النشر: +{state['hours']} ساعة", callback_data="boss_edit:hours"),
+        InlineKeyboardButton(f"🎯 عدد الحسابات: {state.get('target_count', '1')}", callback_data="boss_edit:target_count")
+    )
     markup.row(InlineKeyboardButton(f"الترتيب: {order_label}", callback_data="boss_toggle:order"))
     markup.row(
         InlineKeyboardButton(f"2FA: {'ممنوع ❌' if state['2fa']=='no' else 'لا يهم 🤷‍♂️'}", callback_data="boss_toggle:2fa"),
@@ -637,15 +665,20 @@ def boss_menu_markup(uid):
 @bot.callback_query_handler(func=lambda call: call.data == "lzt_boss_menu")
 def lzt_boss_menu(call):
     if not is_allowed(call.from_user.id): return
-    if call.from_user.id not in USER_STATES: USER_STATES[call.from_user.id] = {}
-    if "boss_filters" not in USER_STATES[call.from_user.id]:
-        USER_STATES[call.from_user.id]["boss_filters"] = {
-            "pmin": "0.1", "pmax": "3.0", "country": "الكل", "dig_min": "8", "dig_max": "9",
-            "hours": "12", "order": "pdate_to_up", "2fa": "no", "spam": "no"
+    uid = call.from_user.id
+    
+    if uid not in USER_STATES: 
+        USER_STATES[uid] = {}
+        
+    # حفظ الإعدادات الافتراضية إذا لم يقم المستخدم بتعديلها سابقاً (Persistence)
+    if "boss_filters" not in USER_STATES[uid]:
+        USER_STATES[uid]["boss_filters"] = {
+            "pmin": "0.1", "pmax": "0.4", "country": "الكل", "dig_min": "8", "dig_max": "9",
+            "hours": "12", "order": "pdate_to_up", "2fa": "no", "spam": "no", "target_count": "1"
         }
     
     text = "👑┊ **لـوحـة الـقـنـص الـمـتـقـدمـة (The Boss):**\nاضغط لتعديل الفلاتر، وإذا واجهت مشكلة راجع Logs السيرفر:"
-    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=boss_menu_markup(call.from_user.id))
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=boss_menu_markup(uid))
 
 # ----------------- تعديل الأزرار -----------------
 @bot.callback_query_handler(func=lambda call: call.data.startswith("boss_toggle:"))
@@ -672,9 +705,10 @@ def boss_edit_start(call):
         "pmax": "أرسل الحد الأقصى للسعر (مثال: 3.5):",
         "country": "أرسل رمز الدولة (مثال IQ أو RU) أو اكتب 'الكل':",
         "digits": "أرسل طول الآيدي بصيغة (min-max) مثال: 8-9 :",
-        "hours": "أرسل عدد الساعات المطلوبة (مثال: 15):"
+        "hours": "أرسل عدد الساعات المطلوبة (مثال: 15):",
+        "target_count": "أرسل عدد الحسابات التي ترغب في شرائها بهذه المهمة (مثال: 5):"
     }
-    msg = bot.send_message(call.message.chat.id, f"•❐• {prompts[field]}")
+    msg = bot.send_message(call.message.chat.id, f"•❐• {prompts.get(field, 'أرسل القيمة الجديدة:')}")
     bot.register_next_step_handler(msg, process_boss_edit)
 
 def process_boss_edit(message):
@@ -687,7 +721,7 @@ def process_boss_edit(message):
     
     try:
         if field in ["pmin", "pmax"]: state[field] = str(float(val))
-        elif field == "hours": state[field] = str(int(val))
+        elif field in ["hours", "target_count"]: state[field] = str(int(val))
         elif field == "country": state[field] = val.upper()
         elif field == "digits":
             dmin, dmax = val.split('-')
@@ -717,7 +751,7 @@ def boss_live_explore(call):
     items = run_async(lzt_search_accounts(filters))
     
     if not items:
-        return bot.send_message(call.message.chat.id, "❌ لا توجد حسابات متوفرة (أو تم رفض الطلب، راجع التيرمنال للسبب).")
+        return bot.send_message(call.message.chat.id, "❌ لا توجد حسابات متوفرة تطابق فلاترك (أو تم رفض الطلب، راجع التيرمنال).")
     
     req_hours = int(state["hours"])
     valid_items = []
@@ -737,13 +771,20 @@ def boss_live_explore(call):
     for item, age in valid_items:
         i_id = item['item_id']
         price = float(item['price'])
-        title = item.get('title', 'حساب تيليجرام')
+        
+        # 🟢 استخراج معلومات الحساب من الموقع نفسه بدون كشف الآيدي الحقيقي
+        country = item.get('account_country', 'غير معروف').upper()
+        digits = item.get('telegram_id_digits', 'غير معروف')
+        spam_status = "نعم ❌" if item.get('spam') else "لا ✅"
         
         text = (
-            f"👤 **{title}**\n"
+            f"👤 **حساب تيليجرام مميز**\n\n"
             f"💰 السعر: `{price}$`\n"
+            f"🌍 الدولة: `{country}`\n"
+            f"🔢 طول الآيدي: `{digits}` أرقام\n"
             f"🕰️ مضى على نشره: `{int(age)} ساعة`\n"
-            f"🔗 الآيدي بالماركت: `{i_id}`"
+            f"⚠️ مقيد (سبام): {spam_status}\n\n"
+            f"🔗 كود المنتج: `{i_id}`"
         )
         markup = InlineKeyboardMarkup().row(InlineKeyboardButton(f"🛒 شـراء الآن ({price}$)", callback_data=f"manual_buy:{i_id}:{price}"))
         bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
@@ -776,9 +817,11 @@ def boss_start(call):
         "pmin": float(state["pmin"]), "pmax": float(state["pmax"])
     }
     if state["country"] != "الكل": filters["country[]"] = state["country"]
+    
+    target_count = int(state.get("target_count", 1)) # جلب العدد المطلوب
         
-    start_sniper_background(uid, "👑 قناص The Boss", filters, target_count=999, required_hours=int(state["hours"]))
-    bot.answer_callback_query(call.id, "🚀 تم إطلاق القناص في الخلفية!", show_alert=True)
+    start_sniper_background(uid, "👑 قناص The Boss", filters, target_count=target_count, required_hours=int(state["hours"]))
+    bot.answer_callback_query(call.id, f"🚀 تم إطلاق القناص! الهدف: {target_count} حساب.", show_alert=True)
     lzt_menu_handler(call)
 
 
