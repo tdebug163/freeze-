@@ -378,7 +378,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # ==========================================
 # ⚙️ إعدادات LZT Market و مدير المهام
 # ==========================================
-LZT_API_TOKEN = "ضع_توكن_LZT_هنا"  # ⚠️ ضع التوكن الخاص بك هنا
+LZT_API_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOjEwNjEwNDg5LCJpc3MiOiJsenQiLCJpYXQiOjE3ODE4NTEyMDAsImp0aSI6Ijk4NzQ3MyIsInNjb3BlIjoiYmFzaWMgcmVhZCBwb3N0IGNvbnZlcnNhdGUgcGF5bWVudCBpbnZvaWNlIGNoYXRib3ggbWFya2V0IiwiZXhwIjoxOTM5NTMxMjAwfQ.eJWZBTsGxn6rCQaflQYC4jcdtRYKUawXmJ75Fm54IwupUPVWOyTtaEFBLqItYvecVycPtO6TyaM_wEFDYQOrdKPWxvXJipohQOKtrpKex2iKdizNYQs1KImn5D4daQW_bJyt_W5-wAz--P9i3GDP9_w44FmRTr62E7ju5nCIeJU"  # ⚠️ ضع التوكن الخاص بك هنا
 LZT_HEADERS = {"Authorization": f"Bearer {LZT_API_TOKEN}", "Accept": "application/json"}
 
 ACTIVE_SNIPERS = {} 
