@@ -367,11 +367,20 @@ def get_all_allowed_users():
     return rows
 
 init_db()
+
+
+
+
+
+
+
+
 import aiohttp
 import asyncio
 import time
 import json
 import traceback
+import re
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram import Client
 
@@ -390,7 +399,6 @@ if 'USER_STATES' not in globals():
 # 📡 دوال الاتصال الحقيقي والعميق بـ LZT API
 # ==========================================
 async def lzt_get_usd_balance():
-    """جلب الرصيد الحقيقي وعرضه بالروبل والدولار مع تتبع الأخطاء"""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get("https://api.lzt.market/me", headers=LZT_HEADERS, timeout=15) as resp:
@@ -405,23 +413,17 @@ async def lzt_get_usd_balance():
                                 c_data = await c_resp.json()
                                 usd_rate = float(c_data.get("usd", 92.0))
                     except Exception as e:
-                        print(f"⚠️ [LZT] فشل جلب سعر الصرف، سيتم استخدام {usd_rate}. السبب: {e}")
+                        print(f"⚠️ [LZT] فشل جلب سعر الصرف: {e}")
                     
                     usd_balance = rub_balance / usd_rate
                     return round(usd_balance, 2), rub_balance
                 else:
-                    err_txt = await resp.text()
-                    print(f"\n❌ [LZT BALANCE ERROR] الكود: {resp.status}")
-                    print(f"📄 التفاصيل: {err_txt}\n")
                     return -1.0, -1.0
     except Exception as e:
-        print(f"\n❌ [LZT FATAL ERROR] خطأ برمجي في فحص الرصيد: {e}\n")
         return 0.0, 0.0
 
 async def lzt_search_accounts(filters):
-    """البحث الحقيقي مع تنظيف الفلاتر وتتبع الأخطاء"""
     url = "https://api.lzt.market/telegram"
-    
     clean_filters = {"currency": "usd"} 
     for key, value in filters.items():
         if str(value).lower() not in ["nomatter", "الكل", "any", "", "none"]:
@@ -434,24 +436,15 @@ async def lzt_search_accounts(filters):
                     data = await resp.json()
                     return data.get("items", [])
                 elif resp.status == 429:
-                    print("⚠️ [LZT RATE LIMIT] سيرفر LZT طلب منا الانتظار (Too Many Requests).")
                     await asyncio.sleep(6)
                     return []
                 else:
-                    err_txt = await resp.text()
-                    print(f"\n❌ [LZT SEARCH REJECTED] سيرفر LZT رفض البحث!")
-                    print(f"🌐 الرابط: {resp.url}")
-                    print(f"⚙️ الفلاتر المرسلة: {clean_filters}")
-                    print(f"⚠️ كود الرفض: {resp.status}")
-                    print(f"📄 سبب الرفض: {err_txt}\n")
                     return []
     except Exception as e:
-        print(f"\n❌ [LZT SEARCH EXCEPTION] خطأ داخلي أثناء البحث: {e}\n")
         traceback.print_exc()
     return []
 
 async def lzt_fast_buy(item_id, price):
-    """تنفيذ الشراء السريع"""
     url = f"https://api.lzt.market/{item_id}/fast-buy"
     payload = {"price": price}
     try:
@@ -459,20 +452,14 @@ async def lzt_fast_buy(item_id, price):
             async with session.post(url, headers=LZT_HEADERS, data=payload, timeout=20) as resp:
                 data = await resp.json()
                 if "errors" in data:
-                    print(f"⚠️ [LZT BUY FAILED] فشل شراء حساب {item_id}: {data['errors'][0]}")
                     return False, data["errors"][0]
                 if "item" in data and "loginData" in data["item"]:
-                    print(f"✅ [LZT BUY SUCCESS] تم شراء الحساب {item_id} بنجاح!")
                     return True, data["item"]
-                else:
-                    print(f"❌ [LZT UNKNOWN BUY ERR] استجابة غير مفهومة للشراء: {data}")
     except Exception as e:
-        print(f"❌ [LZT BUY EXCEPTION] خطأ برمجي أثناء الشراء: {e}")
         return False, str(e)
     return False, "Unknown Error"
 
 async def process_lzt_purchase(admin_id, result, price, task_name="شراء يدوي"):
-    """تحويل الحساب لجلسة وتخزينه وإرسال الإشعار"""
     try:
         login_data = result['loginData']
         hex_key = login_data.get('login', '')
@@ -495,16 +482,15 @@ async def process_lzt_purchase(admin_id, result, price, task_name="شراء يد
             f"⎉╎ الاسـم: {name}\n"
             f"⎉╎ الآيـدي: `{me.id}`\n"
             f"⎉╎ الـدولـة/الرقم: {phone}\n"
+            f"⎉╎ الـمـصـدر: `{task_name}`\n"
             f"•❐• سـنـة الإنـشـاء: {get_creation_year(me.id)}\n"
-            f"•❐• الـسـعـر: {price}$\n"
-            f"•❐• الـمـصـدر: `{task_name}`\n"
+            f"•❐• الـسـعـر: {price}$\n\n"
+            f"✅┊ تـم تـسـجـيـل الـجـلـسـة فـي قـاعـدة الـبـيـانـات بـنـجـاح."
         )
         bot.send_message(admin_id, msg_text, parse_mode="Markdown")
         return True
     except Exception as e:
-        err_detail = traceback.format_exc()
-        print(f"❌ [LZT PROCESS FAILED] خطأ في تسجيل الجلسة:\n{err_detail}")
-        bot.send_message(admin_id, f"⚠️ تم الشراء ولكن فشل تسجيله بالبوت:\n`{e}`\nراجع الـ Logs.", parse_mode="Markdown")
+        bot.send_message(admin_id, f"⚠️┊ تـم الـشـراء ولـكـن فـشـل تـسـجـيـلـه بـالـبـوت:\n`{e}`", parse_mode="Markdown")
         return False
 
 # ==========================================
@@ -512,8 +498,7 @@ async def process_lzt_purchase(admin_id, result, price, task_name="شراء يد
 # ==========================================
 async def sniper_worker(task_id, admin_id, task_name, filters, target_count, required_hours=0):
     bought_count = 0
-    bot.send_message(admin_id, f"✅ **بدأ القناص:** `{task_name}`\nالهدف: {target_count} حساب | مر عليه: +{required_hours} ساعة.")
-    print(f"🚀 [SNIPER STARTED] المهمة: {task_name} | الفلاتر: {filters}")
+    bot.send_message(admin_id, f"✅┊ **بـدأ الـقـنـاص:** `{task_name}`\n•❐• الـهـدف: {target_count} حـسـاب | مـر عـلـيـه: +{required_hours} سـاعـة.")
 
     while ACTIVE_SNIPERS.get(task_id) and bought_count < target_count:
         try:
@@ -526,41 +511,33 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
                 item_id = item['item_id']
                 price = float(item['price'])
                 
-                # حساب وقت النشر بالساعات
                 published_date = item.get('published_date') or item.get('date', time.time())
                 age_hours = (time.time() - published_date) / 3600
                 
-                if required_hours > 0 and age_hours < required_hours:
-                    continue # تخطي لأن عمره لم يصل للمطلوب
+                if required_hours > 0 and age_hours < required_hours: continue 
                 
                 found_valid = True
-                print(f"🎯 [SNIPER TARGET LOCKED] وجدنا حساب يطابق الشروط: {item_id} بسعر {price}$")
-                
                 success, result = await lzt_fast_buy(item_id, price)
                 if success:
                     bought_count += 1
                     await process_lzt_purchase(admin_id, result, price, task_name)
                 
-            await asyncio.sleep(15 if found_valid else 35) # وقت راحة للـ API
+            await asyncio.sleep(15 if found_valid else 35) 
             
         except asyncio.CancelledError:
-            print(f"🛑 [SNIPER STOPPED] تم إيقاف القناص: {task_name}")
             break
         except Exception as e:
-            print(f"❌ [SNIPER WORKER ERR] {e}")
             await asyncio.sleep(10)
 
     if task_id in ACTIVE_SNIPERS:
         del ACTIVE_SNIPERS[task_id]
         if bought_count >= target_count:
-            bot.send_message(admin_id, f"🏁 **اكتملت المهمة:** `{task_name}`\nالعدد الذي تم صيده: {bought_count}")
+            bot.send_message(admin_id, f"🏁┊ **اكـتـمـلـت الـمـهـمـة:** `{task_name}`\n•❐• الـعـدد الـذي تـم صـيـده: {bought_count}")
 
 def start_sniper_background(admin_id, task_name, filters, target_count=1, required_hours=0):
-    """إطلاق القناص في الخلفية وحفظ الفلاتر"""
     task_id = f"task_{int(time.time())}_{admin_id}"
     loop = asyncio.get_event_loop()
     task = loop.create_task(sniper_worker(task_id, admin_id, task_name, filters, target_count, required_hours))
-    # تم إضافة حفظ الفلاتر هنا عشان نقدر نستعرضها لاحقاً
     ACTIVE_SNIPERS[task_id] = {"name": task_name, "task": task, "filters": filters}
 
 # ==========================================
@@ -583,18 +560,19 @@ def lzt_main_keyboard():
 @bot.callback_query_handler(func=lambda call: call.data == "auto_buy_menu")
 def lzt_menu_handler(call):
     if not is_allowed(call.from_user.id): return
-    bot.answer_callback_query(call.id, "⏳ جاري الاتصال بسيرفر LZT...")
+    bot.answer_callback_query(call.id, "⏳ جـاري الاتـصـال بـسـيـرفـر LZT...")
     
     usd_bal, rub_bal = run_async(lzt_get_usd_balance())
     
     if usd_bal == -1.0:
-        bot.edit_message_text("❌ **فشل الاتصال بموقع LZT!**\nتأكد من التوكن أو راجع Logs السيرفر.", call.message.chat.id, call.message.message_id, reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجوع", callback_data="back_home")))
+        bot.edit_message_text("❌┊ **فـشـل الاتـصـال بـمـوقـع LZT!**\n•❐• تـأكـد مـن الـتـوكـن.", call.message.chat.id, call.message.message_id, reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجوع", callback_data="back_home")))
         return
         
     text = (
         f"🛒┊ **قـسـم الـشـراء الـتـلـقـائـي والـقـنـص:**\n\n"
-        f"💰 **رصـيـدك:** `{rub_bal} RUB` ≈ `{usd_bal}$`\n\n"
-        f"اخـتـر إحـدى اسـتـراتـيـجـيـات الـصـيـد أدناه:"
+        f"⎉╎ رصـيـدك بـالـروبـل: `{rub_bal} RUB`\n"
+        f"⎉╎ رصـيـدك بـالـدولار: `{usd_bal}$`\n\n"
+        f"•❐• اخـتـر إحـدى اسـتـراتـيـجـيـات الـصـيـد مـن الأسـفـل ⬇️"
     )
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=lzt_main_keyboard(), parse_mode="Markdown")
 
@@ -608,7 +586,11 @@ def quick_sniper_step_1(call):
     if uid not in USER_STATES: USER_STATES[uid] = {}
     USER_STATES[uid]["quick_snipe_type"] = call.data.split(":")[1]
     
-    msg = bot.send_message(call.message.chat.id, "🎯 **كم عدد الحسابات التي تريد صيدها؟** (أرسل رقم فقط)")
+    text = (
+        "🎯┊ **كـم عـدد الـحـسـابـات الـتـي تـريـد صـيـدهـا؟**\n\n"
+        "•❐• (أرْسـل رقـم فـقـط)."
+    )
+    msg = bot.send_message(call.message.chat.id, text, parse_mode="Markdown")
     bot.register_next_step_handler(msg, quick_sniper_step_2)
 
 def quick_sniper_step_2(message):
@@ -617,15 +599,19 @@ def quick_sniper_step_2(message):
         count = int(message.text.strip())
         USER_STATES[uid]["quick_snipe_count"] = count
     except ValueError:
-        bot.send_message(message.chat.id, "❌ خطأ! يجب إرسال رقم صحيح. حاول مجدداً من القائمة.")
+        bot.send_message(message.chat.id, "❌┊ خـطـأ! يـجـب إرسـال رقـم صـحـيـح. حـاول مـجـدداً مـن الـقـائـمـة.")
         return
         
     markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("استخدام الافتراضي (0.1$ إلى 0.6$)", callback_data="qs_price_default"))
+    markup.row(InlineKeyboardButton("🌟 اسـتـخـدام الافـتـراضـي (0.1$ إلـى 0.6$)", callback_data="qs_price_default"))
     
-    msg = bot.send_message(message.chat.id, 
-        "💰 **أرسل نطاق السعر**\n\nأرسله هكذا: `الحد_الأدنى الحد_الأقصى`\nمثال: `0.2 0.6`\nأو اختر الافتراضي من الزر بالأسفل:", 
-        reply_markup=markup, parse_mode="Markdown")
+    text = (
+        "💰┊ **أرْسـل نـطـاق الـسـعـر بـالـدولار**\n\n"
+        "⎉╎ أرْسـلـه هـكـذا: `الـحـد_الأدنـى الـحـد_الأقـصـى`\n"
+        "⎉╎ مـثـال: `0.2 0.6`\n"
+        "•❐• أو اخـتـر الافـتـراضـي مـن الـزر بـالأسـفـل ⬇️"
+    )
+    msg = bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
     bot.register_next_step_handler(msg, quick_sniper_step_3_text)
 
 @bot.callback_query_handler(func=lambda call: call.data == "qs_price_default")
@@ -636,21 +622,42 @@ def quick_sniper_step_3_btn(call):
 
 def quick_sniper_step_3_text(message):
     uid = message.from_user.id
-    text = message.text.strip().replace("-", " ")
+    text_clean = message.text.replace(",", ".").replace("،", ".")
+    
+    # دالة الاستخراج الذكي للأرقام وتحديد الكبير والصغير تلقائياً
+    numbers = re.findall(r"\d+\.\d+|\d+", text_clean)
+    
+    if len(numbers) < 2:
+        bot.send_message(message.chat.id, "❌┊ لـم أتـمـكـن مـن قـراءة الـسـعـريـن.\n•❐• يـرجـى الـتـأكـد مـن إرسـال رقـمـيـن (مـثـال: 0.1 2.9).", parse_mode="Markdown")
+        return
+        
     try:
-        parts = text.split()
-        pmin = float(parts[0])
-        pmax = float(parts[1])
+        val1 = float(numbers[0])
+        val2 = float(numbers[1])
+        
+        # التعرف التلقائي على الحد الأدنى والأقصى حتى لو أرسلهم بالعكس
+        pmin = min(val1, val2)
+        pmax = max(val1, val2)
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌┊ حـدث خـطـأ فـي تـحـويـل الأرقـام.")
+        return
+        
+    try:
         execute_quick_snipe(uid, pmin, pmax, message)
-    except Exception:
-        bot.send_message(message.chat.id, "❌ صيغة السعر غير صحيحة. يرجى البدء من جديد من القائمة.")
+    except Exception as e:
+        traceback.print_exc()
+        bot.send_message(message.chat.id, f"❌┊ حـدث خـطـأ بـرمـجـي بـالـخـلـفـيـة:\n`{e}`", parse_mode="Markdown")
 
 def execute_quick_snipe(uid, pmin, pmax, message_obj):
     state = USER_STATES.get(uid, {})
     snipe_type = state.get("quick_snipe_type")
     count = state.get("quick_snipe_count", 1)
     
-    # فلاتر أساسية موحدة صارمة (بدون سبام، بدون تحقق 2FA)
+    if not snipe_type:
+        bot.send_message(message_obj.chat.id, "❌┊ فُـقـدت بـيـانـات الـجـلـسـة. يـرجـى الـبـدء مـن الـقـائـمـة مـجـدداً.")
+        return
+    
     base_filters = {"pmin": pmin, "pmax": pmax, "spam": "no", "password": "no", "order_by": "pdate_to_up"}
     
     if snipe_type == "lzt_id8":
@@ -660,11 +667,20 @@ def execute_quick_snipe(uid, pmin, pmax, message_obj):
         task_name = f"🕰️ صيد ID 9 ({pmin}$-{pmax}$)"
         filters = {**base_filters, "dig_min": 9, "dig_max": 9}
     elif snipe_type == "lzt_iraq":
-        task_name = f"🇮🇶 العراق 8-9 ({pmin}$-{pmax}$)"
+        task_name = f"🇮🇶 العراق ({pmin}$-{pmax}$)"
         filters = {**base_filters, "dig_min": 8, "dig_max": 9, "country[]": "IQ"}
+    else:
+        return bot.send_message(message_obj.chat.id, "❌┊ نـوع الـصـيـد غـيـر مـعـروف.")
         
     start_sniper_background(uid, task_name, filters, target_count=count, required_hours=0)
-    bot.send_message(message_obj.chat.id, f"✅ **تم البدء بنجاح!**\n\nالمهمة: `{task_name}`\nالعدد المطلوب: `{count}`\nاضغط /start لمتابعة المهام من القائمة.")
+    
+    msg_success = (
+        f"✅┊ **تـم إطـلاق الـقـنـاص بـنـجـاح!**\n\n"
+        f"⎉╎ الـمـهـمـة: `{task_name}`\n"
+        f"⎉╎ الـعـدد الـمـطـلـوب: `{count}` حـسـابـات\n\n"
+        f"•❐• اضـغـط /start لـمـتـابـعـة مـهـامـك فـي قـائـمـة الـمـراقـبـة."
+    )
+    bot.send_message(message_obj.chat.id, msg_success, parse_mode="Markdown")
 
 # ==========================================
 # 👁️ إدارة مهام المراقبة النشطة وعرض حساباتها
@@ -675,18 +691,22 @@ def task_manage_menu(call):
     tid = call.data.split(":")[1]
     
     if tid not in ACTIVE_SNIPERS:
-        bot.answer_callback_query(call.id, "❌ المهمة غير موجودة أو اكتملت.", show_alert=True)
+        bot.answer_callback_query(call.id, "❌┊ الـمـهـمـة غـيـر مـوجـودة أو اكـتـمـلـت.", show_alert=True)
         return lzt_menu_handler(call)
         
     tinfo = ACTIVE_SNIPERS[tid]
     
     markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🔍 عرض ما يراه القناص (Live)", callback_data=f"task_view:{tid}"))
-    markup.row(InlineKeyboardButton("🛑 إيقاف وحذف المراقبة", callback_data=f"task_stop:{tid}"))
-    markup.row(InlineKeyboardButton("🔙 رجوع", callback_data="auto_buy_menu"))
+    markup.row(InlineKeyboardButton("🔍 عـرض مـا يـراه الـقـنـاص (Live)", callback_data=f"task_view:{tid}"))
+    markup.row(InlineKeyboardButton("🛑 إيـقـاف وحـذف الـمـراقـبـة", callback_data=f"task_stop:{tid}"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع لـلـقـسـم", callback_data="auto_buy_menu"))
     
-    bot.edit_message_text(f"⚙️ **إدارة المراقبة النشطة:**\nالمهمة: `{tinfo['name']}`\n\nماذا تريد أن تفعل؟", 
-                          call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    text = (
+        f"⚙️┊ **إدارة الـمـراقـبـة الـنـشـطـة:**\n\n"
+        f"⎉╎ الـمـهـمـة: `{tinfo['name']}`\n"
+        f"•❐• مـاذا تـريـد أن تـفـعـل؟ ⬇️"
+    )
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("task_view:"))
 def task_view_logic(call):
@@ -694,9 +714,9 @@ def task_view_logic(call):
     tid = call.data.split(":")[1]
     
     if tid not in ACTIVE_SNIPERS:
-        return bot.answer_callback_query(call.id, "❌ المهمة غير موجودة أو انتهت.", show_alert=True)
+        return bot.answer_callback_query(call.id, "❌┊ الـمـهـمـة غـيـر مـوجـودة أو انـتـهـت.", show_alert=True)
         
-    bot.answer_callback_query(call.id, "🔍 جاري جلب الحسابات من الماركت بنفس فلاتر المراقبة...")
+    bot.answer_callback_query(call.id, "🔍 جـاري جـلـب الـحـسـابـات مـن الـمـاركـت...")
     
     tinfo = ACTIVE_SNIPERS[tid]
     filters = tinfo["filters"]
@@ -704,11 +724,11 @@ def task_view_logic(call):
     items = run_async(lzt_search_accounts(filters))
     
     if not items:
-        return bot.send_message(call.message.chat.id, f"❌ لا توجد حسابات متوفرة حالياً تطابق فلاتر مهمة ({tinfo['name']}).\n(القناص سيستمر بالبحث خلف الكواليس).")
+        return bot.send_message(call.message.chat.id, f"❌┊ لا تـوجـد حـسـابـات مـتـوفـرة حـالـيـاً تـطـابـق فـلاتـر مـهـمـة ({tinfo['name']}).")
         
-    bot.send_message(call.message.chat.id, f"📊 **أفضل الحسابات التي يراها القناص حالياً لـ ({tinfo['name']}):**")
+    bot.send_message(call.message.chat.id, f"📊┊ **أفـضـل الـحـسـابـات الـتـي يـراهـا الـقـنـاص حـالـيـاً لـ ({tinfo['name']}):**")
     
-    for item in items[:5]: # يعرض أول 5 حسابات يراها
+    for item in items[:5]: 
         i_id = item['item_id']
         price = float(item['price'])
         country = item.get('account_country', 'غير معروف').upper()
@@ -716,11 +736,11 @@ def task_view_logic(call):
         spam_status = "نعم ❌" if item.get('spam') else "لا ✅"
         
         text = (
-            f"👤 **مطابق للمراقبة**\n"
-            f"💰 السعر: `{price}$`\n"
-            f"🌍 الدولة: `{country}` | 🔢 طول الآيدي: `{digits}`\n"
-            f"⚠️ مقيد (سبام): {spam_status}\n"
-            f"🔗 كود المنتج: `{i_id}`"
+            f"👤┊ **مـطـابـق لـلـمـراقـبـة**\n\n"
+            f"⎉╎ الـسـعـر: `{price}$`\n"
+            f"⎉╎ الـدولـة: `{country}` | 🔢 الآيـدي: `{digits}` أرقـام\n"
+            f"⎉╎ مـقـيـد (سـبـام): {spam_status}\n"
+            f"•❐• كـود الـمـنـتـج: `{i_id}`"
         )
         markup = InlineKeyboardMarkup().row(InlineKeyboardButton(f"🛒 شـراء الآن ({price}$)", callback_data=f"manual_buy:{i_id}:{price}"))
         bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
@@ -733,7 +753,7 @@ def task_stop_logic(call):
     if tid in ACTIVE_SNIPERS:
         ACTIVE_SNIPERS[tid]["task"].cancel()
         del ACTIVE_SNIPERS[tid]
-        bot.answer_callback_query(call.id, "🛑 تم إلغاء وإيقاف المهمة بنجاح!", show_alert=True)
+        bot.answer_callback_query(call.id, "🛑 تـم إلـغـاء وإيـقـاف الـمـهـمـة بـنـجـاح!", show_alert=True)
         
     lzt_menu_handler(call)
 
@@ -746,28 +766,28 @@ def boss_menu_markup(uid):
         "hours": "12", "order": "pdate_to_up", "2fa": "no", "spam": "no", "target_count": "1"
     })
     
-    order_label = "الأقدم أولاً 🕰️" if state['order'] == "pdate_to_up" else "الأرخص أولاً ⬇️"
+    order_label = "الأقـدم أولاً 🕰️" if state['order'] == "pdate_to_up" else "الأرخـص أولاً ⬇️"
     
     markup = InlineKeyboardMarkup()
     markup.row(
-        InlineKeyboardButton(f"الحد الأدنى: {state['pmin']}$", callback_data="boss_edit:pmin"),
-        InlineKeyboardButton(f"الحد الأقصى: {state['pmax']}$", callback_data="boss_edit:pmax")
+        InlineKeyboardButton(f"الـحـد الأدنـى: {state['pmin']}$", callback_data="boss_edit:pmin"),
+        InlineKeyboardButton(f"الـحـد الأقـصـى: {state['pmax']}$", callback_data="boss_edit:pmax")
     )
     markup.row(
-        InlineKeyboardButton(f"الدولة: {state['country']}", callback_data="boss_edit:country"),
-        InlineKeyboardButton(f"الآيدي: {state['dig_min']}-{state['dig_max']}", callback_data="boss_edit:digits")
+        InlineKeyboardButton(f"الـدولـة: {state['country']}", callback_data="boss_edit:country"),
+        InlineKeyboardButton(f"الآيـدي: {state['dig_min']}-{state['dig_max']}", callback_data="boss_edit:digits")
     )
     markup.row(
-        InlineKeyboardButton(f"🕰️ وقت النشر: +{state['hours']} ساعة", callback_data="boss_edit:hours"),
-        InlineKeyboardButton(f"🎯 عدد الحسابات: {state.get('target_count', '1')}", callback_data="boss_edit:target_count")
+        InlineKeyboardButton(f"🕰️ وقـت الـنـشـر: +{state['hours']} سـاعـة", callback_data="boss_edit:hours"),
+        InlineKeyboardButton(f"🎯 عـدد الـحـسـابـات: {state.get('target_count', '1')}", callback_data="boss_edit:target_count")
     )
-    markup.row(InlineKeyboardButton(f"الترتيب: {order_label}", callback_data="boss_toggle:order"))
+    markup.row(InlineKeyboardButton(f"الـتـرتـيـب: {order_label}", callback_data="boss_toggle:order"))
     markup.row(
-        InlineKeyboardButton(f"2FA: {'ممنوع ❌' if state['2fa']=='no' else 'لا يهم 🤷‍♂️'}", callback_data="boss_toggle:2fa"),
-        InlineKeyboardButton(f"سبام: {'ممنوع ❌' if state['spam']=='no' else 'لا يهم 🤷‍♂️'}", callback_data="boss_toggle:spam")
+        InlineKeyboardButton(f"2FA: {'مـمـنـوع ❌' if state['2fa']=='no' else 'لا يـهـم 🤷‍♂️'}", callback_data="boss_toggle:2fa"),
+        InlineKeyboardButton(f"سـبـام: {'مـمـنـوع ❌' if state['spam']=='no' else 'لا يـهـم 🤷‍♂️'}", callback_data="boss_toggle:spam")
     )
-    markup.row(InlineKeyboardButton("👁️ استكشاف الحسابات المتوفرة (شراء يدوي)", callback_data="boss_live_explore"))
-    markup.row(InlineKeyboardButton("🚀 بـدء المـراقـبـة والـقـنـص التلقائي", callback_data="boss_start_sniper"))
+    markup.row(InlineKeyboardButton("👁️ اسـتـكـشـاف الـحـسـابـات الـمـتـوفـرة (شراء يدوي)", callback_data="boss_live_explore"))
+    markup.row(InlineKeyboardButton("🚀 بـدء الـمـراقـبـة والـقـنـص الـتـلـقـائـي", callback_data="boss_start_sniper"))
     markup.row(InlineKeyboardButton("🔙 رجـوع لـلـقـسـم", callback_data="auto_buy_menu"))
     return markup
 
@@ -776,8 +796,7 @@ def lzt_boss_menu(call):
     if not is_allowed(call.from_user.id): return
     uid = call.from_user.id
     
-    if uid not in USER_STATES: 
-        USER_STATES[uid] = {}
+    if uid not in USER_STATES: USER_STATES[uid] = {}
         
     if "boss_filters" not in USER_STATES[uid]:
         USER_STATES[uid]["boss_filters"] = {
@@ -785,8 +804,12 @@ def lzt_boss_menu(call):
             "hours": "12", "order": "pdate_to_up", "2fa": "no", "spam": "no", "target_count": "1"
         }
     
-    text = "👑┊ **لـوحـة الـقـنـص الـمـتـقـدمـة (The Boss):**\nاضغط لتعديل الفلاتر كما تشاء:"
-    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=boss_menu_markup(uid))
+    text = (
+        f"👑┊ **لـوحـة الـقـنـص الـمـتـقـدمـة (The Boss):**\n\n"
+        f"⎉╎ قـم بـتـخـصـيـص الـفـلاتـر بـدقـة قـبـل الـبـدء.\n"
+        f"•❐• يـمـكـنـك اسـتـكـشـاف الـحـسـابـات قـبـل الـشـراء ⬇️"
+    )
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=boss_menu_markup(uid), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("boss_toggle:"))
 def boss_toggle(call):
@@ -808,14 +831,14 @@ def boss_edit_start(call):
     USER_STATES[uid]["edit_field"] = field
     
     prompts = {
-        "pmin": "أرسل الحد الأدنى للسعر (مثال: 0.1):",
-        "pmax": "أرسل الحد الأقصى للسعر (مثال: 3.5):",
-        "country": "أرسل رمز الدولة (مثال IQ أو RU) أو اكتب 'الكل':",
-        "digits": "أرسل طول الآيدي بصيغة (min-max) مثال: 8-9 :",
-        "hours": "أرسل عدد الساعات المطلوبة (مثال: 15):",
-        "target_count": "أرسل عدد الحسابات التي ترغب في شرائها (مثال: 5):"
+        "pmin": "أرْسـل الـحـد الأدنـى لـلـسـعـر (مـثـال: 0.1):",
+        "pmax": "أرْسـل الـحـد الأقـصـى لـلـسـعـر (مـثـال: 3.5):",
+        "country": "أرْسـل رمـز الـدولـة (مـثـال IQ أو RU) أو اكـتـب 'الكل':",
+        "digits": "أرْسـل طـول الآيـدي بـصـيـغـة (مـن-إلـى) مـثـال: 8-9 :",
+        "hours": "أرْسـل عـدد الـسـاعـات الـمـطـلـوبـة (مـثـال: 15):",
+        "target_count": "أرْسـل عـدد الـحـسـابـات الـمـراد شـراؤهـا (مـثـال: 5):"
     }
-    msg = bot.send_message(call.message.chat.id, f"•❐• {prompts.get(field, 'أرسل القيمة الجديدة:')}")
+    msg = bot.send_message(call.message.chat.id, f"•❐• {prompts.get(field, 'أرْسـل الـقـيـمـة الـجـديـدة:')}")
     bot.register_next_step_handler(msg, process_boss_edit)
 
 def process_boss_edit(message):
@@ -834,16 +857,24 @@ def process_boss_edit(message):
             dmin, dmax = val.split('-')
             state["dig_min"] = str(int(dmin))
             state["dig_max"] = str(int(dmax))
+            
+        # ميزة الترتيب التلقائي للسعر الأدنى والأقصى داخل وضع البوس
+        if field in ["pmin", "pmax"]:
+            v1 = float(state["pmin"])
+            v2 = float(state["pmax"])
+            state["pmin"] = str(min(v1, v2))
+            state["pmax"] = str(max(v1, v2))
+            
     except:
-        bot.send_message(message.chat.id, "❌ إدخال غير صالح.")
+        bot.send_message(message.chat.id, "❌┊ إدخـال غـيـر صـالـح.")
         return
         
-    bot.send_message(message.chat.id, "✅ تم الحفظ. اضغط 'رجوع' للوحة التخصيص.", reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 للوحة التخصيص", callback_data="lzt_boss_menu")))
+    bot.send_message(message.chat.id, "✅┊ تـم الـحـفـظ بـنـجـاح.", reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 للـوحـة الـتـخـصـيـص", callback_data="lzt_boss_menu")))
 
 @bot.callback_query_handler(func=lambda call: call.data == "boss_live_explore")
 def boss_live_explore(call):
     uid = call.from_user.id
-    bot.answer_callback_query(call.id, "🔍 يتم جلب الحسابات...")
+    bot.answer_callback_query(call.id, "🔍 يـتـم جـلـب الـحـسـابـات...")
     state = USER_STATES[uid]["boss_filters"]
     
     filters = {
@@ -856,7 +887,7 @@ def boss_live_explore(call):
     items = run_async(lzt_search_accounts(filters))
     
     if not items:
-        return bot.send_message(call.message.chat.id, "❌ لا توجد حسابات متوفرة تطابق فلاترك.")
+        return bot.send_message(call.message.chat.id, "❌┊ لا تـوجـد حـسـابـات مـتـوفـرة تـطـابـق فـلاتـرك.")
     
     req_hours = int(state["hours"])
     valid_items = []
@@ -869,9 +900,9 @@ def boss_live_explore(call):
         if len(valid_items) == 5: break
         
     if not valid_items:
-        return bot.send_message(call.message.chat.id, f"❌ وجدنا حسابات ولكن لم يمر عليها {req_hours} ساعة حتى الآن.")
+        return bot.send_message(call.message.chat.id, f"❌┊ وجـدنـا حـسـابـات ولـكـن لـم يـمـر عـلـيـهـا {req_hours} سـاعـة حـتـى الآن.")
         
-    bot.send_message(call.message.chat.id, "📊 **أفضل الحسابات المتوفرة الآن (The Boss):**")
+    bot.send_message(call.message.chat.id, "📊┊ **أفـضـل الـحـسـابـات الـمـتـوفـرة الآن (The Boss):**")
     
     for item, age in valid_items:
         i_id = item['item_id']
@@ -881,12 +912,12 @@ def boss_live_explore(call):
         spam_status = "نعم ❌" if item.get('spam') else "لا ✅"
         
         text = (
-            f"👤 **حساب تيليجرام مميز**\n"
-            f"💰 السعر: `{price}$`\n"
-            f"🌍 الدولة: `{country}` | 🔢 طول الآيدي: `{digits}`\n"
-            f"🕰️ مضى على نشره: `{int(age)} ساعة`\n"
-            f"⚠️ مقيد (سبام): {spam_status}\n"
-            f"🔗 كود المنتج: `{i_id}`"
+            f"👤┊ **حـسـاب تـيـلـيـجـرام مـمـيـز**\n\n"
+            f"⎉╎ الـسـعـر: `{price}$`\n"
+            f"⎉╎ الـدولـة: `{country}` | 🔢 الآيـدي: `{digits}` أرقـام\n"
+            f"⎉╎ وقـت الـنـشـر: قـبـل `{int(age)} سـاعـة`\n"
+            f"⎉╎ مـقـيـد (سـبـام): {spam_status}\n"
+            f"•❐• كـود الـمـنـتـج: `{i_id}`"
         )
         markup = InlineKeyboardMarkup().row(InlineKeyboardButton(f"🛒 شـراء الآن ({price}$)", callback_data=f"manual_buy:{i_id}:{price}"))
         bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
@@ -906,7 +937,7 @@ def boss_start(call):
     target_count = int(state.get("target_count", 1))
         
     start_sniper_background(uid, "👑 قناص The Boss", filters, target_count=target_count, required_hours=int(state["hours"]))
-    bot.answer_callback_query(call.id, f"🚀 تم إطلاق القناص! الهدف: {target_count} حساب.", show_alert=True)
+    bot.answer_callback_query(call.id, f"🚀 تـم إطـلاق الـقـنـاص! الـهـدف: {target_count} حـسـاب.", show_alert=True)
     lzt_menu_handler(call)
 
 # ==========================================
@@ -916,15 +947,15 @@ def boss_start(call):
 def manual_buy_action(call):
     uid = call.from_user.id
     _, item_id, price = call.data.split(":")
-    bot.edit_message_text(f"⏳ جاري تنفيذ الشراء لـ {item_id}...", call.message.chat.id, call.message.message_id)
+    bot.edit_message_text(f"⏳ جـاري تـنـفـيـذ الـشـراء لـ {item_id}...", call.message.chat.id, call.message.message_id)
     
     async def do_buy():
         success, result = await lzt_fast_buy(item_id, float(price))
         if success:
-            bot.edit_message_text("✅ تمت العملية في LZT، جاري تسجيل الجلسة...", call.message.chat.id, call.message.message_id)
-            await process_lzt_purchase(uid, result, float(price), "شراء يدوي مباشر")
+            bot.edit_message_text("✅┊ تـمـت الـعـمـلـيـة فـي LZT، جـاري تـسـجـيـل الـجـلـسـة...", call.message.chat.id, call.message.message_id)
+            await process_lzt_purchase(uid, result, float(price), "شـراء يـدوي مـبـاشـر")
         else:
-            bot.edit_message_text(f"❌ فشل الشراء (راجع Logs التيرمنال):\n`{result}`", call.message.chat.id, call.message.message_id)
+            bot.edit_message_text(f"❌┊ فـشـل الـشـراء (راجـع Logs):\n`{result}`", call.message.chat.id, call.message.message_id)
             
     run_async(do_buy())
 
