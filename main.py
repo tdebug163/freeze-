@@ -1099,53 +1099,6 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
 
 
-
-
-
-def home_keyboard(uid):
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
-    markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
-    markup.row(InlineKeyboardButton("• تـنـظـيـف شـامـل 🧹", callback_data="menu_clean"), InlineKeyboardButton("• جـلـب الـكـود ✉️", callback_data="req_code"))
-    markup.row(InlineKeyboardButton("• إزالـة مـن الـبـوت 🗑️", callback_data="menu_remove"), InlineKeyboardButton("• تـسـجـيـل خـروج 🚪", callback_data="menu_logout"))
-    markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
-    markup.row(InlineKeyboardButton("• كـشـف الـحـسـابـات 🕵️", callback_data="reveal_accounts"), InlineKeyboardButton("• فـحـص الـحـسـابـات 🔄", callback_data="check_active"))
-    markup.row(InlineKeyboardButton("• عـرض الـجـلـسـات 📂", callback_data="view_sessions_menu"))
-    markup.row(InlineKeyboardButton("• أتمتة تغيير الإيميل السريع 📧", callback_data="auto_email_menu"))
-    
-    # 🌟 زر صيد الكنوز (المجموعات القديمة)
-    markup.row(InlineKeyboardButton("• صـيـد كـنـوز الـمـجـمـوعـات 🏴‍☠️", callback_data="treasure_hunter_menu"))
-
-    if uid in ADMIN_IDS:
-        markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
-        markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• إدارة المراقبة ⏳", callback_data="manage_surveillance"))
-        markup.row(InlineKeyboardButton("• تـدمـيـر وحـذف الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
-
-    return markup
-
-
-
-
-
-
-
-
-
-
-
-import asyncio
-import re
-import time
-import traceback
-from pyrogram import Client, filters
-from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
-from pyrogram.raw.types import EmailVerifyPurposeLoginSetup, EmailVerificationCode
-from pyrogram.errors import FloodWait, RPCError
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-# ==========================================
-# 🔘 لوحة المفاتيح الرئيسية (نظامك كما هي)
-# ==========================================
 def home_keyboard(uid):
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
@@ -1162,8 +1115,19 @@ def home_keyboard(uid):
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
         markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• إدارة المراقبة ⏳", callback_data="manage_surveillance"))
         markup.row(InlineKeyboardButton("• تـدمـيـر وحـذف الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
+        
+        # 👑 تمت إضافة زر القنص هنا للآدمن فقط
+        markup.row(InlineKeyboardButton("🛒 تخصيص الشراء التلقائي (LZT)", callback_data="auto_buy_menu"))
 
     return markup
+
+
+
+
+
+
+
+
 
 
 
@@ -1184,27 +1148,7 @@ from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
 from pyrogram.raw.types import EmailVerifyPurposeLoginSetup, EmailVerificationCode
 from pyrogram.errors import FloodWait, RPCError
 
-# ==========================================
-# 🔘 لوحة المفاتيح الرئيسية (نظامك كما هي)
-# ==========================================
-def home_keyboard(uid):
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
-    markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
-    markup.row(InlineKeyboardButton("• تـنـظـيـف شـامـل 🧹", callback_data="menu_clean"), InlineKeyboardButton("• جـلـب الـكـود ✉️", callback_data="req_code"))
-    markup.row(InlineKeyboardButton("• إزالـة مـن الـبـوت 🗑️", callback_data="menu_remove"), InlineKeyboardButton("• تـسـجـيـل خـروج 🚪", callback_data="menu_logout"))
-    markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
-    markup.row(InlineKeyboardButton("• كـشـف الـحـسـابـات 🕵️", callback_data="reveal_accounts"), InlineKeyboardButton("• فـحـص الـحـسـابـات 🔄", callback_data="check_active"))
-    markup.row(InlineKeyboardButton("• عـرض الـجـلـسـات 📂", callback_data="view_sessions_menu"))
-    markup.row(InlineKeyboardButton("• أتمتة تغيير الإيميل السريع 📧", callback_data="auto_email_menu"))
-    markup.row(InlineKeyboardButton("• صـيـد كـنـوز الـمـجـمـوعـات 🏴‍☠️", callback_data="treasure_hunter_menu"))
 
-    if uid in ADMIN_IDS:
-        markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
-        markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• إدارة المراقبة ⏳", callback_data="manage_surveillance"))
-        markup.row(InlineKeyboardButton("• تـدمـيـر وحـذف الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
-
-    return markup
 
 import asyncio
 import re
