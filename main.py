@@ -371,27 +371,23 @@ init_db()
 
 
 
-
-
-
-
 import aiohttp
 import asyncio
 import time
 import json
 import traceback
 import re
+import threading
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram import Client
 
 # ==========================================
 # ⚙️ إعدادات LZT Market و مدير المهام
 # ==========================================
-LZT_API_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOjEwNjEwNDg5LCJpc3MiOiJsenQiLCJpYXQiOjE3ODE4NTEyMDAsImp0aSI6Ijk4NzQ3MyIsInNjb3BlIjoiYmFzaWMgcmVhZCBwb3N0IGNvbnZlcnNhdGUgcGF5bWVudCBpbnZvaWNlIGNoYXRib3ggbWFya2V0IiwiZXhwIjoxOTM5NTMxMjAwfQ.eJWZBTsGxn6rCQaflQYC4jcdtRYKUawXmJ75Fm54IwupUPVWOyTtaEFBLqItYvecVycPtO6TyaM_wEFDYQOrdKPWxvXJipohQOKtrpKex2iKdizNYQs1KImn5D4daQW_bJyt_W5-wAz--P9i3GDP9_w44FmRTr62E7ju5nCIeJU"  # ⚠️ ضع التوكن الخاص بك هنا
+LZT_API_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOjEwNjEwNDg5LCJpc3MiOiJsenQiLCJpYXQiOjE3ODE4NTEyMDAsImp0aSI6Ijk4NzQ3MyIsInNjb3BlIjoiYmFzaWMgcmVhZCBwb3N0IGNvbnZlcnNhdGUgcGF5bWVudCBpbnZvaWNlIGNoYXRib3ggbWFya2V0IiwiZXhwIjoxOTM5NTMxMjAwfQ.eJWZBTsGxn6rCQaflQYC4jcdtRYKUawXmJ75Fm54IwupUPVWOyTtaEFBLqItYvecVycPtO6TyaM_wEFDYQOrdKPWxvXJipohQOKtrpKex2iKdizNYQs1KImn5D4daQW_bJyt_W5-wAz--P9i3GDP9_w44FmRTr62E7ju5nCIeJU"
 LZT_HEADERS = {"Authorization": f"Bearer {LZT_API_TOKEN}", "Accept": "application/json"}
 
 ACTIVE_SNIPERS = {} 
-# ملاحظة: يُفترض أن USER_STATES معرّفة في كودك الأساسي كـ قاموس (Dictionary)
 if 'USER_STATES' not in globals():
     USER_STATES = {}
 
@@ -535,10 +531,28 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
             bot.send_message(admin_id, f"🏁┊ **اكـتـمـلـت الـمـهـمـة:** `{task_name}`\n•❐• الـعـدد الـذي تـم صـيـده: {bought_count}")
 
 def start_sniper_background(admin_id, task_name, filters, target_count=1, required_hours=0):
+    """إطلاق القناص في Thread مخصص لمنع تداخل أخطاء البوت"""
     task_id = f"task_{int(time.time())}_{admin_id}"
-    loop = asyncio.get_event_loop()
-    task = loop.create_task(sniper_worker(task_id, admin_id, task_name, filters, target_count, required_hours))
-    ACTIVE_SNIPERS[task_id] = {"name": task_name, "task": task, "filters": filters}
+    
+    def background_runner():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        ACTIVE_SNIPERS[task_id]["loop"] = loop
+        task = loop.create_task(sniper_worker(task_id, admin_id, task_name, filters, target_count, required_hours))
+        ACTIVE_SNIPERS[task_id]["task"] = task
+        
+        try:
+            loop.run_until_complete(task)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            loop.close()
+
+    ACTIVE_SNIPERS[task_id] = {"name": task_name, "task": None, "loop": None, "filters": filters}
+    
+    t = threading.Thread(target=background_runner, daemon=True)
+    t.start()
 
 # ==========================================
 # 📱 واجهات الشراء التلقائي الرئيسية
@@ -602,8 +616,20 @@ def quick_sniper_step_2(message):
         bot.send_message(message.chat.id, "❌┊ خـطـأ! يـجـب إرسـال رقـم صـحـيـح. حـاول مـجـدداً مـن الـقـائـمـة.")
         return
         
+    snipe_type = USER_STATES[uid].get("quick_snipe_type", "")
+    
+    # تحديد السعر الافتراضي بناءً على النوع (ID 8 يكون 3.0، والباقي 0.6)
+    if snipe_type == "lzt_id8":
+        default_pmax = 3.0
+        btn_text = "🌟 اسـتـخـدام الافـتـراضـي (0.1$ إلـى 3.0$)"
+    else:
+        default_pmax = 0.6
+        btn_text = "🌟 اسـتـخـدام الافـتـراضـي (0.1$ إلـى 0.6$)"
+        
+    USER_STATES[uid]["default_pmax"] = default_pmax
+
     markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🌟 اسـتـخـدام الافـتـراضـي (0.1$ إلـى 0.6$)", callback_data="qs_price_default"))
+    markup.row(InlineKeyboardButton(btn_text, callback_data="qs_price_default"))
     
     text = (
         "💰┊ **أرْسـل نـطـاق الـسـعـر بـالـدولار**\n\n"
@@ -618,13 +644,14 @@ def quick_sniper_step_2(message):
 def quick_sniper_step_3_btn(call):
     uid = call.from_user.id
     bot.clear_step_handler_by_chat_id(call.message.chat.id)
-    execute_quick_snipe(uid, 0.1, 0.6, call.message)
+    
+    default_pmax = USER_STATES.get(uid, {}).get("default_pmax", 0.6)
+    execute_quick_snipe(uid, 0.1, default_pmax, call.message)
 
 def quick_sniper_step_3_text(message):
     uid = message.from_user.id
     text_clean = message.text.replace(",", ".").replace("،", ".")
     
-    # دالة الاستخراج الذكي للأرقام وتحديد الكبير والصغير تلقائياً
     numbers = re.findall(r"\d+\.\d+|\d+", text_clean)
     
     if len(numbers) < 2:
@@ -635,7 +662,6 @@ def quick_sniper_step_3_text(message):
         val1 = float(numbers[0])
         val2 = float(numbers[1])
         
-        # التعرف التلقائي على الحد الأدنى والأقصى حتى لو أرسلهم بالعكس
         pmin = min(val1, val2)
         pmax = max(val1, val2)
         
@@ -751,7 +777,13 @@ def task_stop_logic(call):
     tid = call.data.split(":")[1]
     
     if tid in ACTIVE_SNIPERS:
-        ACTIVE_SNIPERS[tid]["task"].cancel()
+        tinfo = ACTIVE_SNIPERS[tid]
+        loop = tinfo.get("loop")
+        task = tinfo.get("task")
+        
+        if loop and task and not task.done():
+            loop.call_soon_threadsafe(task.cancel)
+            
         del ACTIVE_SNIPERS[tid]
         bot.answer_callback_query(call.id, "🛑 تـم إلـغـاء وإيـقـاف الـمـهـمـة بـنـجـاح!", show_alert=True)
         
@@ -858,7 +890,6 @@ def process_boss_edit(message):
             state["dig_min"] = str(int(dmin))
             state["dig_max"] = str(int(dmax))
             
-        # ميزة الترتيب التلقائي للسعر الأدنى والأقصى داخل وضع البوس
         if field in ["pmin", "pmax"]:
             v1 = float(state["pmin"])
             v2 = float(state["pmax"])
