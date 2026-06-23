@@ -1004,6 +1004,12 @@ def manual_buy_action(call):
 
 # داله جلب الكروبات 🤬 
 
+
+
+
+
+
+
 import string
 import random
 import asyncio
@@ -1073,7 +1079,6 @@ def start_hunting(call):
     run_async(execute_treasure_hunt(call.from_user.id, call.message.chat.id, status_msg.message_id, accounts_to_check, progress))
 
 async def check_groups_worker(acc_data, progress):
-    """العامل الذكي: يفحص، يعزل جروباتك، يضيف البوت لإنعاشها بدون كراش"""
     acc_id, phone, name, uid, pyro_session = acc_data
     client = Client(f"hnt_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
     
@@ -1092,7 +1097,6 @@ async def check_groups_worker(acc_data, progress):
 
         owned_chats = []
         
-        # المرحلة الأولى: جرد الشاتات بشكل طبيعي وآمن لفصل الملكيات
         try:
             async for dialog in client.get_dialogs():
                 try:
@@ -1107,7 +1111,6 @@ async def check_groups_worker(acc_data, progress):
         except Exception as e:
             logging.error(f"Error reading dialogs for {phone}: {e}")
 
-        # المرحلة الثانية: إضافة البوت وإنعاش "جروباتي"
         sem_add = asyncio.Semaphore(5)
 
         async def process_add_bot(chat):
@@ -1144,14 +1147,13 @@ async def check_groups_worker(acc_data, progress):
                 found_groups.append(r)
 
     except Exception as e:
-        logging.error(f"Error in check_groups_worker for {phone}: {e}\n{traceback.format_exc()}")
+        logging.error(f"Error in check_groups_worker for {phone}: {e}")
     finally:
         progress['done'] += 1
         
     return found_groups
 
 async def progress_updater(chat_id, msg_id, progress):
-    """تحديث العداد المباشر للمستخدم"""
     while progress['done'] < progress['total']:
         text = (
             f"⏳ **جاري الفحص وإضافة البوت الوسيط لإنعاش المجموعات...**\n\n"
@@ -1218,26 +1220,23 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
                 if not client.is_connected:
                     await client.connect()
 
+                # الحل الجذري: نجلب الأيدي الخاص بالحساب عشان ما يطرد نفسه!
+                my_info = await client.get_me()
+                my_id = my_info.id
+
                 chat_obj = await client.get_chat(chat_id_target)
                 is_safe_to_convert = False
 
-                # الفحص العبقري لإعدادات القروب قبل أي تدخل
                 if chat_obj.username:
-                    # عام أصلاً = آمن 100%
                     is_safe_to_convert = True
                 elif chat_obj.type == ChatType.CHANNEL:
-                    # قناة (سجلها دائماً ظاهر) = آمن 100%
                     is_safe_to_convert = True
                 elif chat_obj.type == ChatType.SUPERGROUP:
-                    # قروب خارق خاص: هنا نستخدم Raw API لكشف إعدادات سجل المحادثة
                     peer = await client.resolve_peer(chat_id_target)
                     full_chat_req = await client.invoke(GetFullChannel(channel=peer))
-                    
-                    # إذا hidden_prehistory = False (السجل ظاهر للأعضاء الجدد) فهو آمن
                     if not full_chat_req.full_chat.hidden_prehistory:
                         is_safe_to_convert = True
                 elif chat_obj.type == ChatType.GROUP:
-                    # مجموعة عادية: عند تحويلها لعام تتصفر دائماً، لذلك غير آمنة
                     is_safe_to_convert = False
 
                 if not is_safe_to_convert:
@@ -1246,13 +1245,13 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
                         'data': {'id': chat_id_target, 'title': g['title'], 'phone': g['phone']}
                     }
 
-                # بما أن القروب آمن وسجله ظاهر، نعطيه يوزر ونطرد الأعضاء وإحنا مرتاحين!
+                # آمن! نغيره عام
                 await client.set_chat_username(chat_id_target, username)
                 await asyncio.sleep(1)
 
-                # صمد التاريخ وتم التركيب، اطرد الأعضاء
+                # الطرد الآمن (بدون كراش)
                 async for member in client.get_chat_members(chat_id_target):
-                    if member.user.id != client.me.id:
+                    if member.user and member.user.id != my_id:
                         try:
                             await client.ban_chat_member(chat_id_target, member.user.id)
                         except FloodWait as e:
@@ -1272,10 +1271,9 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
                     }
                 }
             except Exception as e:
-                logging.error(f"Error converting {g['id']}: {e}")
+                logging.error(f"Error converting {g['id']}: {e}\n{traceback.format_exc()}")
                 return None
 
-        # تشغيل 10 بنفس الوقت لسرعة التنفيذ
         sem2 = asyncio.Semaphore(10)
         async def limited_process(g):
             async with sem2:
@@ -1291,7 +1289,6 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
                 else:
                     skipped_groups.append(res['data'])
 
-        # إغلاق الجلسات التي لم يتم استخراج كنوز منها
         used_clients = [g['client'] for g in golden_groups]
         for res in results:
             for g in res:
@@ -1383,7 +1380,6 @@ async def monitor_and_leave(admin_id, target_username, golden_groups):
             bot.send_message(admin_id, "🛑 **تم إلغاء أو إنهاء عملية المراقبة وصيد الكنوز بنجاح.**")
         except Exception:
             pass
-
 
 
 
