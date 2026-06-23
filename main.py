@@ -1004,10 +1004,6 @@ def manual_buy_action(call):
 
 # داله جلب الكروبات 🤬 
 
-
-
-
-
 import string
 import random
 import asyncio
@@ -1017,8 +1013,10 @@ import traceback
 from pyrogram import Client
 from pyrogram.enums import ChatType
 from pyrogram.errors import FloodWait, UserNotParticipant, RPCError
+
+# استدعاء دوال الـ Raw API السريعة
 from pyrogram.raw.functions.messages import AddChatUser
-from pyrogram.raw.functions.channels import InviteToChannel
+from pyrogram.raw.functions.channels import InviteToChannel, GetFullChannel
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # قاموس للتحكم بعملية المراقبة وإلغائها
@@ -1046,9 +1044,9 @@ def treasure_hunter_menu(call):
 
     text = (
         "🏴‍☠️ **صـائـد كـنـوز الـمـجـمـوعـات الـقـديـمـة:**\n\n"
-        "⎉╎ يبحث بذكاء عن مجموعاتك وقنواتك عبر إضافة بوت وسيط لرفعها للمقدمة.\n"
-        "⎉╎ يعزل قروباتك (التي تملكها) عن القروبات الأخرى (التي منضم لها).\n"
-        "⎉╎ يفلتر (2024 وتحت)، يحولها لعام، يطرد الجميع، وينقل الملكية بذكاء.\n\n"
+        "⎉╎ يبحث بذكاء عن مجموعاتك عبر إضافة بوت لإنعاشها.\n"
+        "⎉╎ يفحص (سجل المحادثة)، إذا ظاهر يحول عام وينقل الملكية.\n"
+        "⎉╎ يستبعد القروبات اللي سجلها مخفي لتجنب تصفيرها.\n\n"
         "• إخـتـر الـحـسـاب لـبـدء الـصـيـد:"
     )
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
@@ -1071,7 +1069,6 @@ def start_hunting(call):
 
     status_msg = bot.edit_message_text("⏳ **بدء استخراج المجموعات عبر البوت الوسيط...**", call.message.chat.id, call.message.message_id)
     
-    # تهيئة قاموس التقدم ليشمل القروبات غير المملوكة
     progress = {"done": 0, "total": len(accounts_to_check), "found": 0, "not_owned": 0}
     run_async(execute_treasure_hunt(call.from_user.id, call.message.chat.id, status_msg.message_id, accounts_to_check, progress))
 
@@ -1085,7 +1082,6 @@ async def check_groups_worker(acc_data, progress):
         await client.connect()
         logging.info(f"Started scanning account: {phone}")
 
-        # جلب معرف البوت الوسيط لاستخدامه لاحقاً
         try:
             bot_peer = await client.resolve_peer(TARGET_HELPER_BOT)
         except Exception as e:
@@ -1096,7 +1092,7 @@ async def check_groups_worker(acc_data, progress):
 
         owned_chats = []
         
-        # 1. المرحلة الأولى: جرد الشاتات بشكل طبيعي وآمن لفصل الملكيات
+        # المرحلة الأولى: جرد الشاتات بشكل طبيعي وآمن لفصل الملكيات
         try:
             async for dialog in client.get_dialogs():
                 try:
@@ -1111,20 +1107,18 @@ async def check_groups_worker(acc_data, progress):
         except Exception as e:
             logging.error(f"Error reading dialogs for {phone}: {e}")
 
-        # 2. المرحلة الثانية: إضافة البوت وإنعاش "جروباتي" (5 بنفس الوقت)
+        # المرحلة الثانية: إضافة البوت وإنعاش "جروباتي"
         sem_add = asyncio.Semaphore(5)
 
         async def process_add_bot(chat):
             async with sem_add:
                 try:
-                    # إضافة البوت كعضو عادي فقط باستخدام Raw API
                     if chat.type == ChatType.GROUP:
                         await client.invoke(AddChatUser(chat_id=abs(chat.id), user_id=bot_peer, fwd_limit=0))
                     else:
                         channel_peer = await client.resolve_peer(chat.id)
                         await client.invoke(InviteToChannel(channel=channel_peer, users=[bot_peer]))
                     
-                    # بعد إضافة البوت وتحديث بيانات القروب، نفحص التاريخ
                     year = chat.date.year if getattr(chat, 'date', None) else 2024
                     
                     if year <= 2024:
@@ -1138,11 +1132,10 @@ async def check_groups_worker(acc_data, progress):
                         }
                 except FloodWait as e:
                     await asyncio.sleep(e.value)
-                except Exception as e:
+                except Exception:
                     pass
                 return None
 
-        # تنفيذ عملية إضافة البوت لجميع الجروبات المملوكة
         tasks = [process_add_bot(c) for c in owned_chats]
         results = await asyncio.gather(*tasks)
 
@@ -1154,7 +1147,6 @@ async def check_groups_worker(acc_data, progress):
         logging.error(f"Error in check_groups_worker for {phone}: {e}\n{traceback.format_exc()}")
     finally:
         progress['done'] += 1
-        logging.info(f"Finished {phone}. Found {len(found_groups)} owned old groups.")
         
     return found_groups
 
@@ -1198,7 +1190,6 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
                 f"📊 المجموعات التي أنت (عضو فيها) وتم تجاهلها للتأكيد: {progress['not_owned']}"
             )
             bot.edit_message_text(text_result, chat_id, msg_id, reply_markup=markup)
-            
             for res in results:
                 for g in res:
                     if g['client'].is_connected: await g['client'].disconnect()
@@ -1213,17 +1204,10 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
             report += f"🔹 {g['title'][:15]} | {g['phone']} | {g['year']}\n"
 
         bot.send_message(chat_id, report)
-        bot.edit_message_text("🔥 **بدأت المرحلة الثانية: تحويل القروبات، فحص التاريخ بحساب آخر، وطرد الأعضاء (10 بنفس الوقت)...**", chat_id, msg_id)
-
-        # حساب الفاحص المستقل للتأكد من التاريخ الفعلي بعد التحويل لعام
-        checker_client = Client(f"chk_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=DEFAULT_TEMP_MAIL_SESSION, in_memory=True)
-        try:
-            await checker_client.connect()
-        except Exception as e:
-            logging.error(f"Checker client failed: {e}")
+        bot.edit_message_text("🔥 **بدأت المرحلة الثانية: فحص (سجل المحادثة)، تحويل للعام، وطرد الأعضاء...**", chat_id, msg_id)
 
         golden_groups = []
-        zeroed_groups = []
+        skipped_groups = []
 
         async def process_single_group(g):
             client = g['client']
@@ -1234,58 +1218,64 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
                 if not client.is_connected:
                     await client.connect()
 
-                # تحويل إلى عام
+                chat_obj = await client.get_chat(chat_id_target)
+                is_safe_to_convert = False
+
+                # الفحص العبقري لإعدادات القروب قبل أي تدخل
+                if chat_obj.username:
+                    # عام أصلاً = آمن 100%
+                    is_safe_to_convert = True
+                elif chat_obj.type == ChatType.CHANNEL:
+                    # قناة (سجلها دائماً ظاهر) = آمن 100%
+                    is_safe_to_convert = True
+                elif chat_obj.type == ChatType.SUPERGROUP:
+                    # قروب خارق خاص: هنا نستخدم Raw API لكشف إعدادات سجل المحادثة
+                    peer = await client.resolve_peer(chat_id_target)
+                    full_chat_req = await client.invoke(GetFullChannel(channel=peer))
+                    
+                    # إذا hidden_prehistory = False (السجل ظاهر للأعضاء الجدد) فهو آمن
+                    if not full_chat_req.full_chat.hidden_prehistory:
+                        is_safe_to_convert = True
+                elif chat_obj.type == ChatType.GROUP:
+                    # مجموعة عادية: عند تحويلها لعام تتصفر دائماً، لذلك غير آمنة
+                    is_safe_to_convert = False
+
+                if not is_safe_to_convert:
+                    return {
+                        'status': 'skipped',
+                        'data': {'id': chat_id_target, 'title': g['title'], 'phone': g['phone']}
+                    }
+
+                # بما أن القروب آمن وسجله ظاهر، نعطيه يوزر ونطرد الأعضاء وإحنا مرتاحين!
                 await client.set_chat_username(chat_id_target, username)
                 await asyncio.sleep(1)
 
-                is_golden = False
-                try:
-                    target_chat = await checker_client.join_chat(username)
-                    await asyncio.sleep(0.5)
-                    checker_msg = await checker_client.get_messages(target_chat.id, 1)
+                # صمد التاريخ وتم التركيب، اطرد الأعضاء
+                async for member in client.get_chat_members(chat_id_target):
+                    if member.user.id != client.me.id:
+                        try:
+                            await client.ban_chat_member(chat_id_target, member.user.id)
+                        except FloodWait as e:
+                            await asyncio.sleep(e.value)
+                        except Exception:
+                            pass 
 
-                    if checker_msg and checker_msg.date and checker_msg.date.year <= 2024:
-                        is_golden = True
-
-                    await checker_client.leave_chat(target_chat.id)
-                except Exception:
-                    is_golden = False
-
-                if is_golden:
-                    # صمد التاريخ، اطرد الأعضاء
-                    async for member in client.get_chat_members(chat_id_target):
-                        if member.user.id != client.me.id:
-                            try:
-                                await client.ban_chat_member(chat_id_target, member.user.id)
-                            except FloodWait as e:
-                                await asyncio.sleep(e.value)
-                            except Exception:
-                                pass 
-
-                    return {
-                        'status': 'golden',
-                        'data': {
-                            'id': chat_id_target,
-                            'username': username,
-                            'title': g['title'],
-                            'year': g['year'],
-                            'client': client,
-                            'phone': g['phone']
-                        }
+                return {
+                    'status': 'golden',
+                    'data': {
+                        'id': chat_id_target,
+                        'username': username,
+                        'title': g['title'],
+                        'year': g['year'],
+                        'client': client,
+                        'phone': g['phone']
                     }
-                else:
-                    # تصفير
-                    try:
-                        await client.set_chat_username(chat_id_target, None)
-                    except Exception:
-                        pass
-                    return {
-                        'status': 'zeroed',
-                        'data': {'id': chat_id_target, 'title': g['title'], 'phone': g['phone']}
-                    }
-            except Exception:
+                }
+            except Exception as e:
+                logging.error(f"Error converting {g['id']}: {e}")
                 return None
 
+        # تشغيل 10 بنفس الوقت لسرعة التنفيذ
         sem2 = asyncio.Semaphore(10)
         async def limited_process(g):
             async with sem2:
@@ -1299,20 +1289,18 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
                 if res['status'] == 'golden':
                     golden_groups.append(res['data'])
                 else:
-                    zeroed_groups.append(res['data'])
+                    skipped_groups.append(res['data'])
 
+        # إغلاق الجلسات التي لم يتم استخراج كنوز منها
         used_clients = [g['client'] for g in golden_groups]
         for res in results:
             for g in res:
                 if g['client'] not in used_clients and g['client'].is_connected:
                     await g['client'].disconnect()
 
-        if checker_client.is_connected:
-            await checker_client.disconnect()
-
         if not golden_groups:
             markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجوع", callback_data="treasure_hunter_menu"))
-            final_text = f"❌ **للأسف، جميع القروبات تصفر تاريخها عند التحويل إلى عام.**\n\n📊 الإحصائيات:\nإجمالي: {len(all_old_groups)}\nتصفّرت: {len(zeroed_groups)}"
+            final_text = f"❌ **لم يتم العثور على كنوز حقيقية.**\n\n📊 **سبب الاستبعاد:**\nإجمالي القروبات: {len(all_old_groups)}\nاستُبعدت لأن سجل المحادثة (مخفي): {len(skipped_groups)}\n(تم استبعادها لحمايتها من التصفير)."
             bot.edit_message_text(final_text, chat_id, msg_id, reply_markup=markup)
             return
 
@@ -1320,7 +1308,7 @@ async def execute_treasure_hunt(admin_id, chat_id, msg_id, accounts, progress):
         for g in golden_groups:
             final_report += f"👑 {g['title']}\n🔗 @{g['username']} | 📅 {g['year']}\n\n"
 
-        final_report += f"📊 **الإحصائيات النهائية:**\nإجمالي: {len(all_old_groups)}\nتصفّرت: {len(zeroed_groups)}\nالكنوز الحقيقية: {len(golden_groups)}\n\n"
+        final_report += f"📊 **الإحصائيات النهائية:**\nإجمالي اللي انضاف لها البوت: {len(all_old_groups)}\nتم استبعادها لأن سجلها (مخفي): {len(skipped_groups)}\nالكنوز الحقيقية الصامدة: {len(golden_groups)}\n\n"
         final_report += "•❐• **أرسل الآن (يوزرك) الذي ستدخل به لهذه المجموعات للاستلام:**\n*(قم بالدخول للمجموعات من يوزرك فور إرساله)*"
 
         USER_STATES[admin_id] = {
