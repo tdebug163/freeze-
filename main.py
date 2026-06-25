@@ -2424,7 +2424,8 @@ import asyncio
 import re
 import time
 from datetime import datetime
-from pyrogram import Client, functions
+from pyrogram import Client
+from pyrogram.raw import functions
 from pyrogram.enums import ChatType
 from pyrogram.errors import (
     AuthKeyUnregistered, SessionRevoked, UserDeactivated, 
