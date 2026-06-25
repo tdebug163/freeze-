@@ -2420,94 +2420,110 @@ def show_sessions_by_type(call):
             bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
             time.sleep(0.3)
 
+import asyncio
+import re
+import time
+from datetime import datetime
+from pyrogram import Client, functions
+from pyrogram.enums import ChatType
+from pyrogram.errors import (
+    AuthKeyUnregistered, SessionRevoked, UserDeactivated, 
+    UserDeactivatedBan, FloodWait, PasswordHashInvalid
+)
+
+# ---------------------------------------------------------
+# متغيرات التحكم بالسرعة (Semaphores)
+# ---------------------------------------------------------
+MAX_ACCOUNTS_CONCURRENT = 50 # 50 حساب بنفس الوقت
+MAX_CHATS_CLEAN_CONCURRENT = 20 # 20 محادثة تنظف بنفس الوقت داخل الحساب الواحد
+
+account_semaphore = asyncio.Semaphore(MAX_ACCOUNTS_CONCURRENT)
+clean_semaphore = asyncio.Semaphore(MAX_CHATS_CLEAN_CONCURRENT)
+
+# ---------------------------------------------------------
+# 1. فحص الحسابات الشغالة
+# ---------------------------------------------------------
 @bot.callback_query_handler(func=lambda call: call.data == "check_active")
 def check_active_accounts(call):
     if not is_allowed(call.from_user.id): return
-    bot.answer_callback_query(call.id, "⏳ جاري فحص الحسابات...")
+    bot.answer_callback_query(call.id, "⏳ جاري فحص الحسابات بسرعة 50 اتصال...")
     status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري فـحـص الـحـسـابـات الـشـغـالـة...", parse_mode="Markdown")
     run_async(check_active_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
 
-async def check_active_async(owner_id, chat_id, msg_id):
-    accounts = get_all_accounts(owner_id)
-    if not accounts: return bot.edit_message_text("❌ لا توجد حسابات مضافة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
-    active_count = 0
-    text = "🛂┊ نـتـيـجـة فـحـص الـحـسـابـات:\n\n"
-    for acc_id, phone, name, uid, pyro_session in accounts:
+async def check_single_active(acc_id, phone, name, pyro_session, owner_id):
+    async with account_semaphore: # نضام الطابور الذكي
         client = Client(f"chk_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
             await asyncio.wait_for(client.connect(), timeout=10)
             await client.get_me()
-            text += f"✅ {phone} | {uid}\n"
-            active_count += 1
+            await client.disconnect()
+            return f"✅ {phone} | نشط\n", 1
         except (AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan):
             if await confirm_session_death(pyro_session):
                 handle_dead_session(owner_id, acc_id, phone, name)
-                text += f"❌ {phone} (تـم طـرده وحـذفـه)\n"
+                return f"❌ {phone} (تـم طـرده وحـذفـه)\n", 0
             else:
-                text += f"⚠️ {phone} (خـطـأ مـؤقـت، الـجـلـسـة بـخـيـر)\n"
-                active_count += 1
+                return f"⚠️ {phone} (خـطـأ مـؤقـت)\n", 1
         except asyncio.TimeoutError:
-            text += f"⚠️ {phone} (انتهى وقت الاتصال - معلق)\n"
-            active_count += 1
+            return f"⚠️ {phone} (انتهى وقت الاتصال - معلق)\n", 1
         except Exception:
-            text += f"⚠️ {phone} (فـشـل الاتـصـال بـسـبـب الـشـبـكـة)\n"
-            active_count += 1
+            return f"⚠️ {phone} (فـشـل الاتـصـال بـسـبـب الـشـبـكـة)\n", 1
         finally:
             if client.is_connected: await client.disconnect()
+
+async def check_active_async(owner_id, chat_id, msg_id):
+    accounts = get_all_accounts(owner_id)
+    if not accounts: return bot.edit_message_text("❌ لا توجد حسابات مضافة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
+    
+    tasks = [check_single_active(acc_id, phone, name, pyro_session, owner_id) for acc_id, phone, name, uid, pyro_session in accounts]
+    results = await asyncio.gather(*tasks)
+    
+    active_count = sum(res[1] for res in results)
+    text = "🛂┊ نـتـيـجـة فـحـص الـحـسـابـات:\n\n" + "".join(res[0] for res in results)
+    
     final_text = f"⎉╎ الـجـلـسـات الـنـشـطـة الآن: {active_count} مـن اصـل {len(accounts)}\n\n{text}"
     bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
 
+# ---------------------------------------------------------
+# 2. جلب الأكواد (السريع والشامل)
+# ---------------------------------------------------------
 @bot.callback_query_handler(func=lambda call: call.data == "req_code")
 def scan_all_codes(call):
     if not is_allowed(call.from_user.id): return
-    bot.answer_callback_query(call.id, "⏳ جاري جلب الأكواد...")
+    bot.answer_callback_query(call.id, "⏳ جاري جلب الأكواد (الكل بنفس الوقت)...")
     status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري جـلـب الأكـواد مـن الـحـسـابـات...", parse_mode="Markdown")
     run_async(fetch_all_codes_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
 
-async def fetch_all_codes_async(owner_id, chat_id, msg_id):
-    accounts = get_all_accounts(owner_id)
-    if not accounts:
-        bot.edit_message_text("❌ لا تـوجـد حـسـابـات مـضـافـة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
-        return
-
-    # دالة داخلية لفحص حساب واحد بسرعة (سيتم تشغيلها بشكل متوازي)
-    async def check_single_account(acc_id, phone, pyro_session):
-        codes = []
+async def check_single_account_codes(acc_id, phone, pyro_session):
+    codes = []
+    async with account_semaphore:
         client = Client(f"code_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
-            await asyncio.wait_for(client.connect(), timeout=5)
-            ten_mins_ago = time.time() - 600  # 10 دقائق بالثواني
-
-            async for msg in client.get_chat_history(777000, limit=3):
-                if msg.date and msg.date.timestamp() > ten_mins_ago:
-                    if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
-                        match = re.search(r'\b(\d{5})\b', msg.text)
-                        if match:
-                            codes.append({
-                                'phone': phone,
-                                'code': match.group(1),
-                                'time': msg.date.timestamp()
-                            })
-                            # حذف الكود من تليجرام فوراً بعد جلبه لمحو الأثر
-                            try:
-                                await client.delete_messages(777000, msg.id)
-                            except Exception:
-                                pass
+            await asyncio.wait_for(client.connect(), timeout=8)
+            ten_mins_ago = time.time() - 600
+            async for msg in client.get_chat_history(777000, limit=5):
+                if msg.date and msg.date.timestamp() > ten_mins_ago and msg.text:
+                    # صيدة شاملة: أي 5 أرقام متتالية في رسالة من 777000 هي بالضرورة الكود!
+                    match = re.search(r'\b(\d{5})\b', msg.text)
+                    if match:
+                        codes.append({'phone': phone, 'code': match.group(1), 'time': msg.date.timestamp()})
+                        try:
+                            await client.delete_messages(777000, msg.id)
+                        except: pass
             await client.disconnect()
         except Exception:
-            if client.is_connected: 
-                await client.disconnect()
-        return codes
+            if client.is_connected: await client.disconnect()
+    return codes
 
-    # تشغيل الفحص لجميع الحسابات في نفس الثانية (Parallel Processing)
-    tasks = [check_single_account(acc_id, phone, pyro_session) for acc_id, phone, name, uid, pyro_session in accounts]
+async def fetch_all_codes_async(owner_id, chat_id, msg_id):
+    accounts = get_all_accounts(owner_id)
+    if not accounts: return bot.edit_message_text("❌ لا تـوجـد حـسـابـات مـضـافـة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
+
+    tasks = [check_single_account_codes(acc_id, phone, pyro_session) for acc_id, phone, name, uid, pyro_session in accounts]
     results = await asyncio.gather(*tasks)
 
-    # تجميع الأكواد وترتيبها حسب الأحدث (من الأحدث إلى الأقدم)
     all_codes = [item for sublist in results for item in sublist]
     all_codes.sort(key=lambda x: x['time'], reverse=True)
-
-    # أخذ أحدث كودين فقط
     top_2_codes = all_codes[:2]
 
     if not top_2_codes:
@@ -2515,114 +2531,56 @@ async def fetch_all_codes_async(owner_id, chat_id, msg_id):
         return
 
     text = "🛂┊ أكـواد الـدخـول (الأحـدث فـقـط):\n\n"
-
-    # تنسيق الأحدث أولاً ثم الثاني وقابل للنسخ بضغطة (Markdown)
     for i, item in enumerate(top_2_codes):
         label = "🟢 الأحـدث" if i == 0 else "🔵 الـثـانـي"
-        text += (
-            f"{label}\n"
-            f"⎉╎ الـرقـم: {item['phone']}\n"
-            f"•❐• الـكـود: `{item['code']}`\n"  # العلامات ` ` تجعل الكود قابل للنسخ بضغطة واحدة
-            f"━━━━━━━━━━━━━━━━\n"
-        )
+        text += f"{label}\n⎉╎ الـرقـم: {item['phone']}\n•❐• الـكـود: `{item['code']}`\n━━━━━━━━━━━━━━━━\n"
 
     bot.edit_message_text(text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
 
-@bot.callback_query_handler(func=lambda call: call.data == "autoterm_manage")
-def autoterm_manage_menu(call):
-    if not is_allowed(call.from_user.id): return
-    markup = InlineKeyboardMarkup()
-    accounts = get_all_accounts(call.from_user.id)
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute("SELECT auto_term_enabled FROM sessions WHERE owner_id=?", (call.from_user.id,))
-    rows = c.fetchall()
-    all_enabled = all(r[0] == 1 for r in rows) if rows else False
+# ---------------------------------------------------------
+# 3. الميزة السرية: عرض كافة أكواد حساب معين
+# ---------------------------------------------------------
+@bot.message_handler(commands=['عرض_الاكواد', 'عرض الاكواد'])
+def secret_show_codes(message):
+    if not is_allowed(message.from_user.id): return
+    target = message.text.replace('/عرض الاكواد', '').replace('/عرض_الاكواد', '').strip()
+    if not target:
+        return bot.reply_to(message, "⚠️ أرسل الأمر مع رقم أو أيدي الحساب، مثال:\n`/عرض الاكواد +1234567890`", parse_mode="Markdown")
+    
+    bot.reply_to(message, f"⏳ جاري جلب الأرشيف الكامل لأكواد {target} ...")
+    run_async(secret_fetch_all_codes(message.from_user.id, message.chat.id, target))
 
-    markup.row(InlineKeyboardButton("• تـعـطـيـل الإزالـة لـلـجـمـيـع 🔴" if all_enabled else "• تـفـعـيـل الإزالـة لـلـجـمـيـع 🟢", callback_data="autoterm:toggle:all"))
-    markup.row(InlineKeyboardButton("• ضـبـط وقـت الإزالـة 🕒", callback_data="autoterm_set_time"))
+async def secret_fetch_all_codes(owner_id, chat_id, target):
+    accounts = get_all_accounts(owner_id)
+    target_acc = next((acc for acc in accounts if str(acc[1]) == target or str(acc[0]) == target), None)
+    
+    if not target_acc:
+        return bot.send_message(chat_id, "❌ لم يتم العثور على هذا الحساب في قاعدة البيانات.")
+    
+    acc_id, phone, name, uid, pyro_session = target_acc
+    text = f"🛂┊ الأرشيف الكامل لأكواد: {phone}\n\n"
+    
+    client = Client(f"sec_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+    try:
+        await asyncio.wait_for(client.connect(), timeout=10)
+        found = False
+        async for msg in client.get_chat_history(777000, limit=20):
+            if msg.text:
+                match = re.search(r'\b(\d{5})\b', msg.text)
+                if match:
+                    found = True
+                    msg_time = datetime.fromtimestamp(msg.date.timestamp()).strftime('%Y-%m-%d %H:%M:%S')
+                    text += f"📅 {msg_time}\n•❐• الكود: `{match.group(1)}`\n━━━━━━━━━\n"
+        await client.disconnect()
+        
+        if not found: text += "❌ لا توجد أي رسائل أكواد في هذا الحساب حالياً."
+        bot.send_message(chat_id, text, parse_mode="Markdown")
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ فشل الاتصال بالحساب لجلب الأرشيف.")
 
-    for acc_id, phone, name, uid, _ in accounts:
-        c.execute("SELECT auto_term_enabled, auto_term_interval FROM sessions WHERE id=?", (acc_id,))
-        acc_data = c.fetchone()
-        if acc_data:
-            markup.row(InlineKeyboardButton(f"{'🟢' if acc_data[0] == 1 else '🔴'} {name} | كل {acc_data[1]} سـاعـة", callback_data=f"autoterm:toggle:{acc_id}"))
-    conn.close()
-    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
-    text = "🛂┊ **إدارة إزالـة الأجـهـزة الـتـلـقـائـيـة:**\n\n⎉╎ يـقـوم الـبـوت بـفـحـص وإنـهـاء جـلـسـات الـحـسـابـات بـشـكـل دوري."
-    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("autoterm:toggle:"))
-def handle_autoterm_toggle(call):
-    if not is_allowed(call.from_user.id): return
-    target = call.data.split(":")[-1]
-    conn = get_db_conn()
-    c = conn.cursor()
-    if target == "all":
-        c.execute("SELECT auto_term_enabled FROM sessions WHERE owner_id=?", (call.from_user.id,))
-        rows = c.fetchall()
-        new_state = 0 if all(r[0] == 1 for r in rows) else 1
-        c.execute("UPDATE sessions SET auto_term_enabled=? WHERE owner_id=?", (new_state, call.from_user.id))
-    else:
-        c.execute("SELECT auto_term_enabled FROM sessions WHERE id=?", (target,))
-        new_state = 0 if c.fetchone()[0] == 1 else 1
-        c.execute("UPDATE sessions SET auto_term_enabled=? WHERE id=?", (new_state, target))
-    conn.commit()
-    conn.close()
-    autoterm_manage_menu(call)
-
-@bot.callback_query_handler(func=lambda call: call.data == "autoterm_set_time")
-def autoterm_set_time_start(call):
-    if not is_allowed(call.from_user.id): return
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="autoterm:time:all"))
-    for acc_id, phone, name, uid, _ in get_all_accounts(call.from_user.id):
-        markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"autoterm:time:{acc_id}"))
-    markup.row(InlineKeyboardButton("🔙 إلـغـاء", callback_data="autoterm_manage"))
-    bot.edit_message_text("🛂┊ ضـبـط وقـت الإزالـة:\n\n⎉╎ اخـتـر الـحـسـاب:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("autoterm:time:"))
-def ask_autoterm_hours(call):
-    if not is_allowed(call.from_user.id): return
-    USER_STATES[call.from_user.id] = {"action": "set_autoterm_hours", "target": call.data.split(":")[-1]}
-    msg = bot.send_message(call.message.chat.id, "•❐• أرسـل عـدد الـسـاعـات (مـثـال: 1 لـساعة، 24 لـيوم):")
-    bot.register_next_step_handler(msg, process_autoterm_hours)
-
-def process_autoterm_hours(message):
-    uid = message.from_user.id
-    if uid not in USER_STATES or USER_STATES[uid]["action"] != "set_autoterm_hours": return
-    target = USER_STATES.pop(uid)["target"]
-    if not message.text.strip().isdigit() or int(message.text.strip()) < 1: return bot.send_message(message.chat.id, "❌ رقـم غـيـر صـالـح.", reply_markup=home_keyboard(uid))
-    hours = int(message.text.strip())
-    conn = get_db_conn()
-    c = conn.cursor()
-    if target == "all":
-        c.execute("UPDATE sessions SET auto_term_interval=?, auto_term_enabled=1 WHERE owner_id=?", (hours, uid))
-    else:
-        c.execute("UPDATE sessions SET auto_term_interval=?, auto_term_enabled=1 WHERE id=?", (hours, target))
-    conn.commit()
-    conn.close()
-    bot.send_message(message.chat.id, f"✅ تـم ضـبـط الإزالـة عـلـى: كـل {hours} سـاعـة.", parse_mode="Markdown", reply_markup=home_keyboard(uid))
-
-@bot.callback_query_handler(func=lambda call: call.data == "menu_2fa_manage")
-def menu_2fa_manage(call):
-    if not is_allowed(call.from_user.id): return
-    bot.edit_message_text("🛂┊ إدارة الـتـحـقـق بـخـطـوتـيـن:\n\n⎉╎ اخـتـر الـعـمـلـيـة:", call.message.chat.id, call.message.message_id, reply_markup=two_fa_keyboard(), parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data in ["menu_terminate", "menu_clean", "menu_logout", "menu_remove", "menu_2fa_remove", "menu_2fa_change"])
-def action_menus(call):
-    if not is_allowed(call.from_user.id): return
-    action = call.data.replace("menu_", "")
-    titles = {
-        "terminate": "🛂┊ إنـهـاء الـجـلـسـات الأُخـرى:\n⎉╎ اخـتـر حـسـابـاً أو نـفـذ عـلـى الـجـمـيـع:",
-        "clean": "🛂┊ الـتـنـظـيـف الـشـامـل:\n⎉╎ اخـتـر حـسـابـاً أو نـفـذ عـلـى الـجـمـيـع:",
-        "logout": "🛂┊ تـسـجـيـل خـروج نـهـائـي:\n⎉╎ اخـتـر حـسـابـاً لـلـخـروج مـنـه:",
-        "remove": "🛂┊ إزالـة مـن الـبـوت (بـدون خـروج):\n⎉╎ اخـتـر حـسـابـاً لـحـذفـه بـرمـجـيـاً:",
-        "2fa_remove": "🛂┊ حـذف الـتـحـقـق بـخـطـوتـيـن:\n⎉╎ اخـتـر الـحـسـاب الـمـسـتـهـدف:",
-        "2fa_change": "🛂┊ تـغـيـيـر الـتـحـقـق بـخـطـوتـيـن:\n⎉╎ اخـتـر الـحـسـاب الـمـسـتـهـدف:"
-    }
-    bot.edit_message_text(titles[action], call.message.chat.id, call.message.message_id, reply_markup=accounts_action_keyboard(call.from_user.id, action), parse_mode="Markdown")
-
+# ---------------------------------------------------------
+# 4. تنفيذ العمليات (التنظيف، الإنهاء، الخروج) بـ 50 اتصال متوازي
+# ---------------------------------------------------------
 @bot.callback_query_handler(func=lambda call: call.data.startswith("act:"))
 def execute_action(call):
     if not is_allowed(call.from_user.id): return
@@ -2636,141 +2594,159 @@ def execute_action(call):
         bot.register_next_step_handler(msg, process_2fa_old_pass)
         return
 
-    bot.answer_callback_query(call.id, "⏳ جاري التنفيذ الفعلي...")
+    bot.answer_callback_query(call.id, "⏳ جاري التنفيذ الفعلي بـ 50 اتصال...")
     status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري الـعـمـل بـشـكـل صـارم (Raw API)...", parse_mode="Markdown")
 
     if target == "all":
-        results = []
-        for acc in get_all_accounts(call.from_user.id):
-            results.append(run_async(perform_action_async(action, acc[0], call.from_user.id)))
-            time.sleep(0.5)
-        bot.edit_message_text("🛂┊ **مـلـخـص الـعـمـلـيـة:**\n\n" + "\n".join(results), call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
+        run_async(execute_action_all_async(action, call.from_user.id, status_msg.chat.id, status_msg.message_id))
     else:
-        res = run_async(perform_action_async(action, int(target), call.from_user.id))
-        bot.edit_message_text(res, call.message.chat.id, status_msg.message_id, reply_markup=home_keyboard(call.from_user.id), parse_mode="Markdown")
+        run_async(execute_action_single_async(action, int(target), call.from_user.id, status_msg.chat.id, status_msg.message_id))
+
+async def execute_action_all_async(action, owner_id, chat_id, msg_id):
+    tasks = [perform_action_async(action, acc[0], owner_id) for acc in get_all_accounts(owner_id)]
+    results = await asyncio.gather(*tasks)
+    
+    # تقسيم الرسالة إذا كانت طويلة جداً
+    result_text = "🛂┊ **مـلـخـص الـعـمـلـيـة:**\n\n" + "\n".join(results)
+    if len(result_text) > 4000:
+        bot.edit_message_text(result_text[:4000] + "\n... (مقتطع)", chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+    else:
+        bot.edit_message_text(result_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+
+async def execute_action_single_async(action, acc_id, owner_id, chat_id, msg_id):
+    res = await perform_action_async(action, acc_id, owner_id)
+    bot.edit_message_text(res, chat_id, msg_id, reply_markup=home_keyboard(owner_id), parse_mode="Markdown")
 
 async def perform_action_async(action, acc_id, owner_id):
-    acc = get_account(acc_id)
-    if not acc: return "❌ الـحـسـاب غـيـر مـوجـود."
-    _, _, phone, user_id, first_name, pyro_session, _, _, _, _, _, _ = acc
+    async with account_semaphore:
+        acc = get_account(acc_id)
+        if not acc: return "❌ الـحـسـاب غـيـر مـوجـود."
+        _, _, phone, user_id, first_name, pyro_session, _, _, _, _, _, _ = acc
 
-    if action == "remove":
-        delete_account(acc_id)
-        return f"✅ تـم إزالـة `{phone}` بـرمـجـيـاً مـن الـبـوت."
+        if action == "remove":
+            delete_account(acc_id)
+            return f"✅ تـم إزالـة `{phone}` بـرمـجـيـاً مـن الـبـوت."
 
-    exec_client = Client(f"exec_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
-    try:
-        await asyncio.wait_for(exec_client.connect(), timeout=12)
-    except Exception: return f"❌ فـشـل الاتـصـال بـ `{phone}`"
+        exec_client = Client(f"exec_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(exec_client.connect(), timeout=12)
+        except Exception: return f"❌ فـشـل الاتـصـال بـ `{phone}`"
 
-    result_msg = ""
-    try:
-        if action == "terminate":
-            auths = await exec_client.invoke(functions.account.GetAuthorizations())
-            has_other_sessions = False
-            terminated_count = 0
-            wait_error = False
+        result_msg = ""
+        try:
+            if action == "terminate":
+                auths = await exec_client.invoke(functions.account.GetAuthorizations())
+                has_other_sessions = False
+                terminated_count = 0
+                wait_error = False
 
-            for auth in auths.authorizations:
-                if not getattr(auth, 'current', False):
-                    has_other_sessions = True
-                    try:
-                        await exec_client.invoke(functions.account.ResetAuthorization(hash=auth.hash))
-                        terminated_count += 1
-                        await asyncio.sleep(0.4)
-                    except Exception as e:
-                        if "fresh" in str(e).lower() or "24" in str(e).lower() or "FORBIDDEN" in str(e).upper():
-                            wait_error = True
-                            break
+                for auth in auths.authorizations:
+                    if not getattr(auth, 'current', False):
+                        has_other_sessions = True
+                        try:
+                            await exec_client.invoke(functions.account.ResetAuthorization(hash=auth.hash))
+                            terminated_count += 1
+                        except Exception as e:
+                            if "fresh" in str(e).lower() or "24" in str(e).lower() or "FORBIDDEN" in str(e).upper():
+                                wait_error = True
+                                break
 
-            if wait_error: result_msg = f"⚠️ `{phone}`: يـجـب الانـتـظـار 24 سـاعـة لإنـهـاء الـجـلـسـات."
-            elif not has_other_sessions: result_msg = f"⚠️ لا يـوجـد جـلـسـات أخـرى لإنـهـائـهـا لـ `{phone}`."
-            else: result_msg = f"✅ تـم إنـهـاء ({terminated_count}) جـلـسـة بـنـجـاح لـ `{phone}`."
+                if wait_error: result_msg = f"⚠️ `{phone}`: يـجـب الانـتـظـار 24 سـاعـة لإنـهـاء الـجـلـسـات."
+                elif not has_other_sessions: result_msg = f"⚠️ لا يـوجـد جـلـسـات أخـرى لإنـهـائـهـا لـ `{phone}`."
+                else: result_msg = f"✅ تـم إنـهـاء ({terminated_count}) جـلـسـة بـنـجـاح لـ `{phone}`."
 
-        elif action == "clean":
-            cleaned_count = 0
-            async for dialog in exec_client.get_dialogs(limit=250):
+            elif action == "clean":
+                # دالة داخلية لحذف شات واحد (سنشغل 20 بنفس الوقت عبر clean_semaphore)
+                async def delete_single_dialog(dialog):
+                    async with clean_semaphore:
+                        try:
+                            peer = await exec_client.resolve_peer(dialog.chat.id)
+                            if dialog.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL]:
+                                if dialog.chat.type == ChatType.GROUP:
+                                    me = await exec_client.resolve_peer("me")
+                                    await exec_client.invoke(functions.messages.DeleteChatUser(chat_id=peer.chat_id, user_id=me))
+                                else:
+                                    await exec_client.invoke(functions.channels.LeaveChannel(channel=peer))
+                                return 1
+                            elif dialog.chat.type in [ChatType.PRIVATE, ChatType.BOT]:
+                                # هذا السطر يمسح حتى رسائل "انضم فلان لتلجرام" ويمسح المحادثات المؤرشفة والمخفية
+                                if dialog.chat.id not in [777000, exec_client.me.id]:
+                                    await exec_client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
+                                    return 1
+                        except FloodWait as e:
+                            await asyncio.sleep(e.value)
+                        except Exception: pass
+                        return 0
+
+                # نجلب جميع المحادثات (بما فيها المؤرشفة)
+                dialogs_to_delete = []
+                async for dialog in exec_client.get_dialogs(limit=400):
+                    dialogs_to_delete.append(dialog)
+                
+                # تنفيذ الحذف لـ 20 محادثة بنفس الوقت داخل هذا الحساب
+                del_tasks = [delete_single_dialog(d) for d in dialogs_to_delete]
+                del_results = await asyncio.gather(*del_tasks)
+                cleaned_count = sum(del_results)
+
+                result_msg = f"🧹 تـم تـنـظـيـف ({cleaned_count}) مـحـادثـة (شـامـلـة) لـ `{phone}`."
+
+            elif action == "logout":
                 try:
-                    peer = await exec_client.resolve_peer(dialog.chat.id)
-                    if dialog.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL]:
-                        if dialog.chat.type == ChatType.GROUP:
-                            me = await exec_client.resolve_peer("me")
-                            await exec_client.invoke(functions.messages.DeleteChatUser(chat_id=peer.chat_id, user_id=me))
-                        else:
-                            await exec_client.invoke(functions.channels.LeaveChannel(channel=peer))
-                        cleaned_count += 1
-                        await asyncio.sleep(0.3)
-                    elif dialog.chat.type in [ChatType.PRIVATE, ChatType.BOT]:
-                        if not dialog.chat.is_verified and dialog.chat.id not in [777000, exec_client.me.id]:
-                            await exec_client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
-                            cleaned_count += 1
-                            await asyncio.sleep(0.3)
-                except FloodWait as e: await asyncio.sleep(e.value)
-                except Exception: continue
-            result_msg = f"🧹 تـم تـنـظـيـف ({cleaned_count}) مـحـادثـة حـقـيـقـيـاً لـ `{phone}`."
+                    await exec_client.invoke(functions.auth.LogOut())
+                    delete_account(acc_id)
+                    result_msg = f"🚪 تـم تـسـجـيـل الـخـروج نـهـائـيـاً مـن `{phone}`."
+                except Exception: result_msg = f"❌ فـشـل تـسـجـيـل الـخـروج لـ `{phone}`."
 
-        elif action == "logout":
-            try:
-                await exec_client.invoke(functions.auth.LogOut())
-                delete_account(acc_id)
-                result_msg = f"🚪 تـم تـسـجـيـل الـخـروج نـهـائـيـاً مـن `{phone}`."
-            except Exception: result_msg = f"❌ فـشـل تـسـجـيـل الـخـروج لـ `{phone}`."
+        except Exception as e:
+            if "fresh" in str(e).lower() or "24" in str(e).lower(): result_msg = f"⚠️ `{phone}`: يـجـب الانـتـظـار 24 سـاعـة."
+            else: result_msg = f"❌ حـدث خـطـأ غـيـر مـتـوقـع فـي `{phone}`."
+        finally:
+            if exec_client.is_connected: await exec_client.disconnect()
 
-    except Exception as e:
-        if "fresh" in str(e).lower() or "24" in str(e).lower(): result_msg = f"⚠️ `{phone}`: يـجـب الانـتـظـار 24 سـاعـة."
-        else: result_msg = f"❌ حـدث خـطـأ غـيـر مـتـوقـع فـي `{phone}`."
-    finally:
-        if exec_client.is_connected: await exec_client.disconnect()
+        return result_msg
 
-    return result_msg
-
-def process_2fa_old_pass(message):
-    uid = message.from_user.id
-    if uid not in USER_STATES: return
-    old_pass = message.text.strip()
-    USER_STATES[uid]["old_pass"] = "" if old_pass == "لا يوجد" else old_pass
-    if USER_STATES[uid]["action"] == "2fa_change":
-        msg = bot.send_message(message.chat.id, "•❐• أرسـل كـلـمـة الـسـر الـجـديـدة:", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_2fa_new_pass)
-    else:
-        execute_2fa_action(message, uid)
-
-def process_2fa_new_pass(message):
-    uid = message.from_user.id
-    if uid not in USER_STATES: return
-    USER_STATES[uid]["new_pass"] = message.text.strip()
-    execute_2fa_action(message, uid)
-
-async def do_2fa_async(uid, target, action, old_pass, new_pass):
-    results = []
-    accounts = get_all_accounts(uid) if target == "all" else [(int(target),)]
-    for acc in accounts:
-        acc_data = get_account(acc[0])
-        if not acc_data: continue
-        _, _, phone, _, _, pyro_session, _, _, _, _, _, _ = acc_data
-        client = Client(f"2fa{acc[0]}{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+# ---------------------------------------------------------
+# 5. التحقق بخطوتين (2FA) متوازي بالكامل
+# ---------------------------------------------------------
+async def do_single_2fa(acc_id, phone, pyro_session, action, old_pass, new_pass):
+    async with account_semaphore:
+        client = Client(f"2fa{acc_id}{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
             await asyncio.wait_for(client.connect(), timeout=12)
             if action == "2fa_remove":
                 await client.remove_cloud_password(password=old_pass)
-                results.append(f"✅ {phone}: تـم حـذف الـتـحـقـق.")
+                return f"✅ {phone}: تـم حـذف الـتـحـقـق."
             elif action == "2fa_change":
                 if old_pass == "": await client.enable_cloud_password(password=new_pass, hint="Secured")
                 else: await client.change_cloud_password(current_password=old_pass, new_password=new_pass)
-                results.append(f"✅ {phone}: تـم تـعـيـيـن الـتـحـقـق.")
-        except PasswordHashInvalid: results.append(f"❌ {phone}: بـاسـوورد الـ 2FA خـاطـئ.")
+                return f"✅ {phone}: تـم تـعـيـيـن الـتـحـقـق."
+        except PasswordHashInvalid: return f"❌ {phone}: بـاسـوورد الـ 2FA خـاطـئ."
         except Exception as e:
-            if "missing" in str(e).lower() or "empty" in str(e).lower(): results.append(f"⚠️ {phone}: لا يـوجـد تـحـقـق أسـاسـاً.")
-            else: results.append(f"❌ {phone}: فـشـل.")
+            if "missing" in str(e).lower() or "empty" in str(e).lower(): return f"⚠️ {phone}: لا يـوجـد تـحـقـق أسـاسـاً."
+            else: return f"❌ {phone}: فـشـل."
         finally:
             if client.is_connected: await client.disconnect()
+
+async def do_2fa_async(uid, target, action, old_pass, new_pass):
+    accounts = get_all_accounts(uid) if target == "all" else [acc for acc in get_all_accounts(uid) if str(acc[0]) == target]
+    tasks = [do_single_2fa(acc[0], acc[2], acc[5], action, old_pass, new_pass) for acc in accounts]
+    results = await asyncio.gather(*tasks)
     return results
 
 def execute_2fa_action(message, uid):
     state = USER_STATES.pop(uid)
-    status_msg = bot.send_message(message.chat.id, "⏳ جـاري تـنـفـيـذ طـلـبـك بـحـذر...")
-    results = run_async(do_2fa_async(uid, state["target"], state["action"], state.get("old_pass", ""), state.get("new_pass", "")))
-    bot.edit_message_text("🛂┊ نـتـيـجـة الـتـحـقـق:\n\n" + "\n".join(results), message.chat.id, status_msg.message_id, reply_markup=home_keyboard(uid), parse_mode="Markdown")
+    status_msg = bot.send_message(message.chat.id, "⏳ جـاري تـنـفـيـذ طـلـبـك بـ 50 اتصال...")
+    
+    async def run_2fa_wrapper():
+        results = await do_2fa_async(uid, state["target"], state["action"], state.get("old_pass", ""), state.get("new_pass", ""))
+        bot.edit_message_text("🛂┊ نـتـيـجـة الـتـحـقـق:\n\n" + "\n".join(results), message.chat.id, status_msg.message_id, reply_markup=home_keyboard(uid), parse_mode="Markdown")
+        
+    run_async(run_2fa_wrapper())
+
+
+
+
+
 
 # =========================================================
 # 📥 محرك تسجيل الدخول (Hex, String, ZIP, TDATA)
