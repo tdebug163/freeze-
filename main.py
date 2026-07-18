@@ -401,7 +401,7 @@ async def lzt_get_usd_balance():
                 if resp.status == 200:
                     data = await resp.json()
                     rub_balance = float(data.get("user", {}).get("balance", 0))
-                    
+
                     usd_rate = 92.0 
                     try:
                         async with session.get("https://api.lzt.market/currency", headers=LZT_HEADERS, timeout=10) as c_resp:
@@ -410,7 +410,7 @@ async def lzt_get_usd_balance():
                                 usd_rate = float(c_data.get("usd", 92.0))
                     except:
                         pass
-                    
+
                     usd_balance = rub_balance / usd_rate
                     return round(usd_balance, 2), rub_balance
                 else:
@@ -424,19 +424,19 @@ async def process_lzt_purchase(admin_id, result, price, task_name="شراء يد
         login_data = result['loginData']
         hex_key = login_data.get('login', '')
         dc_id = int(login_data.get('password', '2'))
-        
+
         pyro_sess, tl_sess = generate_sessions(API_ID, dc_id, bytes.fromhex(hex_key))
-        
+
         client = Client(f"lz_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_sess, in_memory=True)
         await client.connect()
         me = await client.get_me()
         await client.disconnect()
-        
+
         phone = f"+{me.phone_number}" if me.phone_number else "Unknown"
         name = me.first_name or "User"
-        
+
         save_hex_account(admin_id, phone, me.id, name, pyro_sess, tl_sess, "LZT", hex_key, dc_id)
-        
+
         msg_text = (
             f"🎣┊ **تـم صـيـد حـسـاب جـديـد بـنـجـاح!**\n\n"
             f"⎉╎ الاسـم: {name}\n"
@@ -534,15 +534,15 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
 
 def start_sniper_background(admin_id, task_name, filters, target_count=1, required_hours=0):
     task_id = f"task_{int(time.time())}_{admin_id}"
-    
+
     def background_runner():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         ACTIVE_SNIPERS[task_id]["loop"] = loop
         task = loop.create_task(sniper_worker(task_id, admin_id, task_name, filters, target_count, required_hours))
         ACTIVE_SNIPERS[task_id]["task"] = task
-        
+
         try:
             loop.run_until_complete(task)
         except asyncio.CancelledError:
@@ -551,7 +551,7 @@ def start_sniper_background(admin_id, task_name, filters, target_count=1, requir
             loop.close()
 
     ACTIVE_SNIPERS[task_id] = {"name": task_name, "task": None, "loop": None, "filters": filters}
-    
+
     t = threading.Thread(target=background_runner, daemon=True)
     t.start()
 
@@ -599,11 +599,11 @@ def lzt_main_keyboard():
     markup.row(InlineKeyboardButton("🕰️ صـيـد ID 9 الأقـدم", callback_data="qs_start:lzt_id9"))
     markup.row(InlineKeyboardButton("🇮🇶 صـيـد الـعـراق العشوائي (12₽)", callback_data="qs_start:lzt_iraq"))
     markup.row(InlineKeyboardButton("👑 الـتـخـصـيـص الـمـتـقـدم (The Boss)", callback_data="lzt_boss_menu"))
-    
+
     if ACTIVE_SNIPERS:
         for tid, tinfo in list(ACTIVE_SNIPERS.items()):
             markup.row(InlineKeyboardButton(f"👀 مـراقـبـة: {tinfo['name']} 🟢", callback_data=f"task_manage:{tid}"))
-            
+
     markup.row(InlineKeyboardButton("🔙 رجـوع لـلـرئـيـسـيـة", callback_data="back_home"))
     return markup
 
@@ -611,13 +611,13 @@ def lzt_main_keyboard():
 def lzt_menu_handler(call):
     if not is_allowed(call.from_user.id): return
     bot.answer_callback_query(call.id, "⏳ جـاري الاتـصـال بـسـيـرفـر LZT...")
-    
+
     usd_bal, rub_bal = run_async(lzt_get_usd_balance())
-    
+
     if usd_bal == -1.0:
         bot.edit_message_text("❌┊ **فـشـل الاتـصـال بـمـوقـع LZT!**\n•❐• تـأكـد مـن الـتـوكـن.", call.message.chat.id, call.message.message_id, reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجوع", callback_data="back_home")))
         return
-        
+
     text = (
         f"🛒┊ **قـسـم الـشـراء الـتـلـقـائـي والـقـنـص:**\n\n"
         f"⎉╎ رصـيـدك بـالـروبـل: `{rub_bal} RUB`\n"
@@ -635,7 +635,7 @@ def quick_sniper_step_1(call):
     uid = call.from_user.id
     if uid not in USER_STATES: USER_STATES[uid] = {}
     USER_STATES[uid]["quick_snipe_type"] = call.data.split(":")[1]
-    
+
     text = (
         "🎯┊ **كـم عـدد الـحـسـابـات الـتـي تـريـد صـيـدهـا دفـعـة واحـدة؟**\n\n"
         "•❐• (أرْسـل رقـم فـقـط)."
@@ -651,25 +651,25 @@ def quick_sniper_step_2(message):
     except ValueError:
         bot.send_message(message.chat.id, "❌┊ خـطـأ! يـجـب إرسـال رقـم صـحـيـح.")
         return
-        
+
     snipe_type = USER_STATES[uid].get("quick_snipe_type", "")
-    
+
     if snipe_type == "lzt_iraq":
         execute_quick_snipe(uid, 0, 12, message)
         return
-    
+
     if snipe_type == "lzt_id8":
         default_pmax = 3.0
         btn_text = "🌟 اسـتـخـدام الافـتـراضـي (0.1$ إلـى 3.0$)"
     else:
         default_pmax = 0.6
         btn_text = "🌟 اسـتـخـدام الافـتـراضـي (0.1$ إلـى 0.6$)"
-        
+
     USER_STATES[uid]["default_pmax"] = default_pmax
 
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton(btn_text, callback_data="qs_price_default"))
-    
+
     text = (
         "💰┊ **أرْسـل نـطـاق الـسـعـر بـالـدولار**\n\n"
         "⎉╎ أرْسـلـه هـكـذا: `الـحـد_الأدنـى الـحـد_الأقـصـى`\n"
@@ -690,7 +690,7 @@ def quick_sniper_step_3_text(message):
     uid = message.from_user.id
     text_clean = message.text.replace(",", ".").replace("،", ".")
     numbers = re.findall(r"\d+\.\d+|\d+", text_clean)
-    
+
     if len(numbers) < 2:
         bot.send_message(message.chat.id, "❌┊ لـم أتـمـكـن مـن قـراءة الـسـعـريـن.", parse_mode="Markdown")
         return
@@ -699,7 +699,7 @@ def quick_sniper_step_3_text(message):
         pmin, pmax = min(v1, v2), max(v1, v2)
     except:
         return bot.send_message(message.chat.id, "❌┊ حـدث خـطـأ فـي تـحـويـل الأرقـام.")
-        
+
     try:
         execute_quick_snipe(uid, pmin, pmax, message)
     except Exception as e:
@@ -709,12 +709,12 @@ def execute_quick_snipe(uid, pmin, pmax, message_obj):
     state = USER_STATES.get(uid, {})
     snipe_type = state.get("quick_snipe_type")
     count = state.get("quick_snipe_count", 1)
-    
+
     if not snipe_type:
         return bot.send_message(message_obj.chat.id, "❌┊ فُـقـدت بـيـانـات الـجـلـسـة.")
-    
+
     base_filters = {"pmin": pmin, "pmax": pmax, "spam": "no", "password": "no", "order_by": "pdate_to_up"}
-    
+
     if snipe_type == "lzt_id8":
         task_name = f"🎯 صيد ID 8 ({pmin}$-{pmax}$)"
         filters = {**base_filters, "dig_min": 8, "dig_max": 8}
@@ -733,9 +733,9 @@ def execute_quick_snipe(uid, pmin, pmax, message_obj):
         }
     else:
         return bot.send_message(message_obj.chat.id, "❌┊ نـوع الـصـيـد غـيـر مـعـروف.")
-        
+
     start_sniper_background(uid, task_name, filters, target_count=count, required_hours=0)
-    
+
     msg_success = (
         f"✅┊ **تـم إطـلاق الـقـنـاص الـشـرس بـنـجـاح!**\n\n"
         f"⎉╎ الـمـهـمـة: `{task_name}`\n"
@@ -751,18 +751,18 @@ def execute_quick_snipe(uid, pmin, pmax, message_obj):
 def task_manage_menu(call):
     if not is_allowed(call.from_user.id): return
     tid = call.data.split(":")[1]
-    
+
     if tid not in ACTIVE_SNIPERS:
         bot.answer_callback_query(call.id, "❌┊ الـمـهـمـة غـيـر مـوجـودة أو اكـتـمـلـت.", show_alert=True)
         return lzt_menu_handler(call)
-        
+
     tinfo = ACTIVE_SNIPERS[tid]
-    
+
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🔍 عـرض مـا يـراه الـقـنـاص (Live)", callback_data=f"task_view:{tid}"))
     markup.row(InlineKeyboardButton("🛑 إيـقـاف وحـذف الـمـراقـبـة", callback_data=f"task_stop:{tid}"))
     markup.row(InlineKeyboardButton("🔙 رجـوع لـلـقـسـم", callback_data="auto_buy_menu"))
-    
+
     text = (
         f"⚙️┊ **إدارة الـمـراقـبـة الـنـشـطـة:**\n\n"
         f"⎉╎ الـمـهـمـة: `{tinfo['name']}`\n"
@@ -774,22 +774,22 @@ def task_manage_menu(call):
 def task_view_logic(call):
     if not is_allowed(call.from_user.id): return
     tid = call.data.split(":")[1]
-    
+
     if tid not in ACTIVE_SNIPERS:
         return bot.answer_callback_query(call.id, "❌┊ الـمـهـمـة غـيـر مـوجـودة.", show_alert=True)
-        
+
     bot.answer_callback_query(call.id, "🔍 جـاري جـلـب الـحـسـابـات مـن الـمـاركـت...")
-    
+
     tinfo = ACTIVE_SNIPERS[tid]
     filters = tinfo["filters"]
-    
+
     items = run_async(lzt_search_accounts_manual(filters))
-    
+
     if not items:
         return bot.send_message(call.message.chat.id, f"❌┊ لا تـوجـد حـسـابـات مـتـوفـرة حـالـيـاً تـطـابـق فـلاتـر مـهـمـة ({tinfo['name']}).")
-        
+
     bot.send_message(call.message.chat.id, f"📊┊ **أفـضـل الـحـسـابـات الـتـي يـراهـا الـقـنـاص حـالـيـاً:**")
-    
+
     for item in items[:5]: 
         i_id = item['item_id']
         price = float(item['price'])
@@ -797,7 +797,7 @@ def task_view_logic(call):
         digits = item.get('telegram_id_digits', 'غير معروف')
         spam_status = "نعم ❌" if item.get('spam') else "لا ✅"
         currency_symbol = "RUB" if filters.get("currency") == "rub" else "$"
-        
+
         text = (
             f"👤┊ **مـطـابـق لـلـمـراقـبـة**\n\n"
             f"⎉╎ الـسـعـر: `{price} {currency_symbol}`\n"
@@ -812,18 +812,18 @@ def task_view_logic(call):
 def task_stop_logic(call):
     if not is_allowed(call.from_user.id): return
     tid = call.data.split(":")[1]
-    
+
     if tid in ACTIVE_SNIPERS:
         tinfo = ACTIVE_SNIPERS[tid]
         loop = tinfo.get("loop")
         task = tinfo.get("task")
-        
+
         if loop and task and not task.done():
             loop.call_soon_threadsafe(task.cancel)
-            
+
         del ACTIVE_SNIPERS[tid]
         bot.answer_callback_query(call.id, "🛑 تـم إلـغـاء وإيـقـاف الـمـهـمـة بـنـجـاح!", show_alert=True)
-        
+
     lzt_menu_handler(call)
 
 # ==========================================
@@ -834,9 +834,9 @@ def boss_menu_markup(uid):
         "pmin": "0.1", "pmax": "0.4", "country": "الكل", "dig_min": "8", "dig_max": "9",
         "hours": "12", "order": "pdate_to_up", "2fa": "no", "spam": "no", "target_count": "1"
     })
-    
+
     order_label = "الأقـدم أولاً 🕰️" if state['order'] == "pdate_to_up" else "الأرخـص أولاً ⬇️"
-    
+
     markup = InlineKeyboardMarkup()
     markup.row(
         InlineKeyboardButton(f"الـحـد الأدنـى: {state['pmin']}$", callback_data="boss_edit:pmin"),
@@ -864,15 +864,15 @@ def boss_menu_markup(uid):
 def lzt_boss_menu(call):
     if not is_allowed(call.from_user.id): return
     uid = call.from_user.id
-    
+
     if uid not in USER_STATES: USER_STATES[uid] = {}
-        
+
     if "boss_filters" not in USER_STATES[uid]:
         USER_STATES[uid]["boss_filters"] = {
             "pmin": "0.1", "pmax": "0.4", "country": "الكل", "dig_min": "8", "dig_max": "9",
             "hours": "12", "order": "pdate_to_up", "2fa": "no", "spam": "no", "target_count": "1"
         }
-    
+
     text = (
         f"👑┊ **لـوحـة الـقـنـص الـمـتـقـدمـة (The Boss):**\n\n"
         f"⎉╎ قـم بـتـخـصـيـص الـفـلاتـر بـدقـة قـبـل الـبـدء.\n"
@@ -885,11 +885,11 @@ def boss_toggle(call):
     uid = call.from_user.id
     target = call.data.split(":")[1]
     state = USER_STATES[uid]["boss_filters"]
-    
+
     if target == "order": state["order"] = "price_to_up" if state["order"] == "pdate_to_up" else "pdate_to_up"
     elif target == "2fa": state["2fa"] = "nomatter" if state["2fa"] == "no" else "no"
     elif target == "spam": state["spam"] = "nomatter" if state["spam"] == "no" else "no"
-        
+
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=boss_menu_markup(uid))
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("boss_edit:"))
@@ -898,7 +898,7 @@ def boss_edit_start(call):
     field = call.data.split(":")[1]
     USER_STATES[uid]["action"] = "boss_editing"
     USER_STATES[uid]["edit_field"] = field
-    
+
     prompts = {
         "pmin": "أرْسـل الـحـد الأدنـى لـلـسـعـر (مـثـال: 0.1):",
         "pmax": "أرْسـل الـحـد الأقـصـى لـلـسـعـر (مـثـال: 3.5):",
@@ -916,7 +916,7 @@ def process_boss_edit(message):
     field = USER_STATES[uid]["edit_field"]
     val = message.text.strip()
     state = USER_STATES[uid]["boss_filters"]
-    
+
     try:
         if field in ["pmin", "pmax"]: state[field] = str(float(val))
         elif field in ["hours", "target_count"]: state[field] = str(int(val))
@@ -925,7 +925,7 @@ def process_boss_edit(message):
             dmin, dmax = val.split('-')
             state["dig_min"] = str(int(dmin))
             state["dig_max"] = str(int(dmax))
-            
+
         if field in ["pmin", "pmax"]:
             v1 = float(state["pmin"])
             v2 = float(state["pmax"])
@@ -933,7 +933,7 @@ def process_boss_edit(message):
             state["pmax"] = str(max(v1, v2))
     except:
         return bot.send_message(message.chat.id, "❌┊ إدخـال غـيـر صـالـح.")
-        
+
     bot.send_message(message.chat.id, "✅┊ تـم الـحـفـظ بـنـجـاح.", reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 للـوحـة الـتـخـصـيـص", callback_data="lzt_boss_menu")))
 
 @bot.callback_query_handler(func=lambda call: call.data == "boss_live_explore")
@@ -941,41 +941,41 @@ def boss_live_explore(call):
     uid = call.from_user.id
     bot.answer_callback_query(call.id, "🔍 يـتـم جـلـب الـحـسـابـات...")
     state = USER_STATES[uid]["boss_filters"]
-    
+
     filters = {
         "dig_min": int(state["dig_min"]), "dig_max": int(state["dig_max"]),
         "spam": state["spam"], "password": state["2fa"], "order_by": state["order"],
         "pmin": float(state["pmin"]), "pmax": float(state["pmax"])
     }
     if state["country"] != "الكل": filters["country[]"] = state["country"]
-    
+
     items = run_async(lzt_search_accounts_manual(filters))
-    
+
     if not items:
         return bot.send_message(call.message.chat.id, "❌┊ لا تـوجـد حـسـابـات مـتـوفـرة تـطـابـق فـلاتـرك.")
-    
+
     req_hours = int(state["hours"])
     valid_items = []
-    
+
     for item in items:
         pub_date = item.get('published_date') or item.get('date', time.time())
         age_hours = (time.time() - pub_date) / 3600
         if age_hours >= req_hours:
             valid_items.append((item, age_hours))
         if len(valid_items) == 5: break
-        
+
     if not valid_items:
         return bot.send_message(call.message.chat.id, f"❌┊ وجـدنـا حـسـابـات ولـكـن لـم يـمـر عـلـيـهـا {req_hours} سـاعـة حـتـى الآن.")
-        
+
     bot.send_message(call.message.chat.id, "📊┊ **أفـضـل الـحـسـابـات الـمـتـوفـرة الآن (The Boss):**")
-    
+
     for item, age in valid_items:
         i_id = item['item_id']
         price = float(item['price'])
         country = item.get('account_country', 'غير معروف').upper()
         digits = item.get('telegram_id_digits', 'غير معروف')
         spam_status = "نعم ❌" if item.get('spam') else "لا ✅"
-        
+
         text = (
             f"👤┊ **حـسـاب تـيـلـيـجـرام مـمـيـز**\n\n"
             f"⎉╎ الـسـعـر: `{price}$`\n"
@@ -991,16 +991,16 @@ def boss_live_explore(call):
 def boss_start(call):
     uid = call.from_user.id
     state = USER_STATES[uid]["boss_filters"]
-    
+
     filters = {
         "dig_min": int(state["dig_min"]), "dig_max": int(state["dig_max"]),
         "spam": state["spam"], "password": state["2fa"], "order_by": state["order"],
         "pmin": float(state["pmin"]), "pmax": float(state["pmax"])
     }
     if state["country"] != "الكل": filters["country[]"] = state["country"]
-    
+
     target_count = int(state.get("target_count", 1))
-        
+
     start_sniper_background(uid, "👑 قناص The Boss", filters, target_count=target_count, required_hours=int(state["hours"]))
     bot.answer_callback_query(call.id, f"🚀 تـم إطـلاق الـقـنـاص! الـهـدف: {target_count} حـسـاب.", show_alert=True)
     lzt_menu_handler(call)
@@ -1013,7 +1013,7 @@ def manual_buy_action(call):
     uid = call.from_user.id
     _, item_id, price = call.data.split(":")
     bot.edit_message_text(f"⏳ جـاري تـنـفـيـذ الـشـراء لـ {item_id}...", call.message.chat.id, call.message.message_id)
-    
+
     async def do_buy():
         success, result = await lzt_fast_buy_manual(item_id, float(price))
         if success:
@@ -1021,7 +1021,7 @@ def manual_buy_action(call):
             await process_lzt_purchase(uid, result, float(price), "شـراء يـدوي مـبـاشـر")
         else:
             bot.edit_message_text(f"❌┊ فـشـل الـشـراء:\n`{result}`", call.message.chat.id, call.message.message_id)
-            
+
     run_async(do_buy())
 
 
@@ -2896,7 +2896,6 @@ def execute_2fa_action(message, uid):
 
 
 
-
 # =========================================================
 # 📥 محرك تسجيل الدخول (Hex, String, ZIP, TDATA)
 # =========================================================
@@ -2970,105 +2969,43 @@ def handle_text_input(message):
         if me: process_successful_login(message, status_msg, me, p_sess, "String")
         else: bot.edit_message_text("❌ جـلـسـة مـعـطـوبـة.", message.chat.id, status_msg.message_id)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # =========================================================
 # 🛠️ دالة المستخرج الخام والتحويل الذكي للجلسات (Raw API Parser)
 # =========================================================
 def get_pyrogram_session_string_from_sqlite(db_path, api_id=2040):
-    """
-    تقرأ ملف قاعدة البيانات SQLite مباشرة (سواء كان Telethon أو Pyrogram)،
-    وتستخرج مفتاح auth_key و dc_id وتقوم بتركيب كود جلسة Pyrogram V2 متوافق 100%.
-    """
     conn = None
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-
-        # جلب قائمة الجداول للتحقق من الصيغة
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = [row[0] for row in cursor.fetchall()]
-
         if "sessions" not in tables:
-            return None, f"الملف غير صالح (لا يحتوي على جدول sessions). الجداول المتاحة: {tables}"
-
+            return None, f"الملف غير صالح"
         cursor.execute("PRAGMA table_info(sessions)")
         columns = [row[1] for row in cursor.fetchall()]
-
-        dc_id = None
-        auth_key = None
-        user_id = 0
-        is_bot = False
-        test_mode = False
+        dc_id, auth_key, user_id, is_bot, test_mode = None, None, 0, False, False
 
         if "server_address" in columns or "port" in columns:
-            # 📌 صيغة Telethon
             cursor.execute("SELECT dc_id, auth_key FROM sessions LIMIT 1;")
             row = cursor.fetchone()
-            if not row:
-                return None, "جدول جلسة Telethon فارغ."
-            dc_id, auth_key = row[0], row[1]
+            if row: dc_id, auth_key = row[0], row[1]
         else:
-            # 📌 صيغة Pyrogram
             select_cols = [c for c in ["dc_id", "test_mode", "auth_key", "user_id", "is_bot"] if c in columns]
-            query = f"SELECT {', '.join(select_cols)} FROM sessions LIMIT 1;"
-            cursor.execute(query)
+            cursor.execute(f"SELECT {', '.join(select_cols)} FROM sessions LIMIT 1;")
             row = cursor.fetchone()
-            if not row:
-                return None, "جدول جلسة Pyrogram فارغ."
+            if row:
+                rd = dict(zip(select_cols, row))
+                dc_id, auth_key, test_mode, user_id, is_bot = rd.get("dc_id"), rd.get("auth_key"), bool(rd.get("test_mode", False)), rd.get("user_id", 0), bool(rd.get("is_bot", False))
 
-            row_dict = dict(zip(select_cols, row))
-            dc_id = row_dict.get("dc_id")
-            auth_key = row_dict.get("auth_key")
-            test_mode = bool(row_dict.get("test_mode", False))
-            user_id = row_dict.get("user_id", 0)
-            is_bot = bool(row_dict.get("is_bot", False))
-
-        if not dc_id or not auth_key:
-            return None, f"مفقود dc_id أو auth_key في ملف الجلسة."
-
-        if len(auth_key) != 256:
-            return None, f"طول مفتاح الـ auth_key غير صالح: {len(auth_key)} بايت (يجب أن يكون 256)."
-
-        # تركيب الـ Session String بصيغة Pyrogram V2 الحديثة لعام 2026
-        # الهيكل المعتمد: >BI?256sQ? (DC ID, API ID, Test Mode, Auth Key, User ID, Is Bot)
-        user_id = abs(int(user_id)) if user_id is not None else 0
-        packed = struct.pack(
-            ">BI?256sQ?",
-            int(dc_id),
-            int(api_id),
-            bool(test_mode),
-            bytes(auth_key),
-            user_id,
-            bool(is_bot)
-        )
-
-        session_str = base64.urlsafe_b64encode(packed).decode('ascii').rstrip('=')
-        return session_str, None
-
-    except Exception as e:
-        err_details = traceback.format_exc()
-        return None, f"خطأ أثناء قراءة قاعدة البيانات داخلياً:\n{err_details}"
+        if not dc_id or not auth_key: return None, "بيانات ناقصة"
+        packed = struct.pack(">BI?256sQ?", int(dc_id), int(api_id), bool(test_mode), bytes(auth_key), abs(int(user_id)), bool(is_bot))
+        return base64.urlsafe_b64encode(packed).decode('ascii').rstrip('='), None
+    except Exception as e: return None, str(e)
     finally:
-        if conn:
-            conn.close()
-
+        if conn: conn.close()
 
 # =========================================================
-# 📊 دوال شريط التقدم وأزرار الزينة (للـ ZIP)
+# 📊 دوال شريط التقدم وأزرار الزينة
 # =========================================================
 @bot.callback_query_handler(func=lambda call: call.data == "ignore")
 def ignore_callback(call):
@@ -3076,197 +3013,160 @@ def ignore_callback(call):
 
 def generate_progress_text(processed, total):
     percent = int((processed / total) * 100) if total > 0 else 0
-    filled = int(percent / 5)  # شريط من 20 جزء
-    bar = "=" * filled + "-" * (20 - filled)
-    return f"⏳ جاري الفحص والتحويل المباشر\n[{bar}] {percent}% ({processed}/{total})"
+    filled = int(percent / 5)
+    bar = "🟢" * filled + "⚪️" * (20 - filled)
+    return f"⏳ جـاري الـفـحـص والـتـحـقـق الـمـكـثـف...\n[{bar}] {percent}% ({processed}/{total})"
 
 def generate_progress_markup(processed, total, success, failed, frozen=0):
     markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("العدد الكلي ⏳", callback_data="ignore"), InlineKeyboardButton(f"{processed}/{total}", callback_data="ignore"))
-    markup.row(InlineKeyboardButton("نجحت العملية ✔️", callback_data="ignore"), InlineKeyboardButton(f"{success}", callback_data="ignore"))
-    markup.row(InlineKeyboardButton("جلسات شغالة ✔️", callback_data="ignore"), InlineKeyboardButton(f"{success}", callback_data="ignore"))
-    markup.row(InlineKeyboardButton("مجمدة ❄️", callback_data="ignore"), InlineKeyboardButton(f"{frozen}", callback_data="ignore"))
-    markup.row(InlineKeyboardButton("فشلت العملية ⚠️", callback_data="ignore"), InlineKeyboardButton(f"{failed}", callback_data="ignore"))
-    markup.row(InlineKeyboardButton("جلسات تالفة ❌", callback_data="ignore"), InlineKeyboardButton(f"{failed}", callback_data="ignore"))
-    markup.row(InlineKeyboardButton("الفشل الكلي ❌", callback_data="ignore"), InlineKeyboardButton(f"{failed}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("العدد الكلي ⏳", callback_data="ignore"), InlineKeyboardButton(f"{total}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("شغالة ✔️", callback_data="ignore"), InlineKeyboardButton(f"{success}", callback_data="ignore"))
+    markup.row(InlineKeyboardButton("تالفة ❌", callback_data="ignore"), InlineKeyboardButton(f"{failed}", callback_data="ignore"))
     return markup
 
-
 # =========================================================
-# 📁 دالة استلام الملفات المحدثة
+# 📁 دالة استلام ومعالجة الملفات (Session, ZIP, TXT)
 # =========================================================
 @bot.message_handler(content_types=['document'])
 def handle_files(message):
     if not is_allowed(message.from_user.id): return
     file_name = message.document.file_name.lower()
+    
+    # 📌 حالة إرسال ملف .txt يحتوي على hex:dc (الفحص السريع)
+    if file_name.endswith(".txt"):
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        lines = downloaded_file.decode('utf-8').splitlines()
+        
+        valid_sessions = []
+        for line in lines:
+            if ":" in line:
+                parts = line.split(":")
+                if len(parts[0]) >= 512: # التأكد أنه Hex
+                    valid_sessions.append((parts[0].strip(), parts[1].strip()))
+        
+        total = len(valid_sessions)
+        if total == 0: return bot.reply_to(message, "❌ الملف لا يحتوي على تنسيق `hex:dc` صحيح.")
+        
+        status_msg = bot.reply_to(message, generate_progress_text(0, total), reply_markup=generate_progress_markup(0, total, 0, 0))
+        
+        async def process_txt_fast():
+            state = {'processed': 0, 'success': 0, 'failed': 0}
+            sem = asyncio.Semaphore(50) # فحص 50 حساب متوازي كما طلبت
 
-    # 📌 حالة إرسال ملف .session واحد بشكل مفرد
-    if file_name.endswith(".session"):
+            async def ui_updater():
+                last_p = -1
+                while state['processed'] < total:
+                    if state['processed'] != last_p:
+                        last_p = state['processed']
+                        try: bot.edit_message_text(generate_progress_text(state['processed'], total), message.chat.id, status_msg.message_id, reply_markup=generate_progress_markup(state['processed'], total, state['success'], state['failed']))
+                        except: pass
+                    await asyncio.sleep(2)
+
+            async def check_hex_session(hex_data, dc_id):
+                async with sem:
+                    is_ok = False
+                    try:
+                        p_sess, _ = generate_sessions(API_ID, int(dc_id), bytes.fromhex(hex_data), 9999)
+                        client = Client(f"bulk_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=p_sess, in_memory=True)
+                        await asyncio.wait_for(client.connect(), timeout=12)
+                        me = await client.get_me()
+                        if me and not check_duplicate(message.from_user.id, me.id):
+                            save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", p_sess, "", "TXT_Hex")
+                            is_ok = True
+                        await client.disconnect()
+                    except: pass
+                    state['processed'] += 1
+                    if is_ok: state['success'] += 1
+                    else: state['failed'] += 1
+
+            updater = asyncio.create_task(ui_updater())
+            await asyncio.gather(*[check_hex_session(h, d) for h, d in valid_sessions])
+            updater.cancel()
+            return state['success'], state['failed']
+
+        s_count, f_count = run_async(process_txt_fast())
+        final_text = (f"🛂┊ تـم انـتـهـاء فـحـص مـلـف الـ TXT !\n\n⎉╎ الإجمالي: {total}\n✅ الـشـغـالـة: {s_count}\n❌ الـتـالـفـة: {f_count}")
+        bot.edit_message_text(final_text, message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
+
+    # 📌 حالة إرسال ملف .session واحد
+    elif file_name.endswith(".session"):
         status_msg = bot.reply_to(message, "•❐• جـاري قـراءة مـلـف الـجـلـسـة...", parse_mode="Markdown")
-        temp_name = f"sess_{message.from_user.id}{int(time.time())}"
-        temp_file_path = f"{temp_name}.session"
-
-        with open(temp_file_path, 'wb') as f: 
-            f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
-
+        temp_file_path = f"sess_{message.from_user.id}_{int(time.time())}.session"
+        with open(temp_file_path, 'wb') as f: f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
+        
         async def verify_file():
-            # تحويل الملف بشكل خام لتفادي مشاكل القفل والترقية
-            session_str, err = get_pyrogram_session_string_from_sqlite(temp_file_path, API_ID)
-            if not session_str:
-                print(f"❌ فشل تحليل ملف منفرد: {err}")
-                return None, None, f"فشل استخراج البيانات: {err}"
-
-            client = None
+            session_str, _ = get_pyrogram_session_string_from_sqlite(temp_file_path, API_ID)
+            if not session_str: return None, None, "فشل الاستخراج"
+            client = Client("temp", session_string=session_str, api_id=API_ID, api_hash=API_HASH, in_memory=True)
             try:
-                # تشغيل العميل بالكامل بالذاكرة (In-Memory) لتجنب قفل SQLite
-                client = Client(name=temp_name, session_string=session_str, api_id=API_ID, api_hash=API_HASH, in_memory=True)
                 await asyncio.wait_for(client.connect(), timeout=12)
                 me, p_sess = await client.get_me(), await client.export_session_string()
                 await client.disconnect()
                 return me, p_sess, None
-            except Exception as e:
-                err_details = traceback.format_exc()
-                print(f"❌ خطأ أثناء الاتصال بالتلجرام للجلسة المنفردة:\n{err_details}")
-                if client and client.is_connected:
-                    await client.disconnect()
-                return None, None, err_details
-            finally:
-                if os.path.exists(temp_file_path): 
-                    os.remove(temp_file_path)
+            except Exception as e: return None, None, str(e)
+            finally: 
+                if os.path.exists(temp_file_path): os.remove(temp_file_path)
 
-        me, p_sess, err_msg = run_async(verify_file())
-        if me: 
-            process_successful_login(message, status_msg, me, p_sess, "File")
-        else: 
-            error_text = f"❌ مـلـف مـعـطـوب أو فـشـل الـفـحـص.\n\n⚠️ **تفاصيل الخطأ:**\n`{err_msg[:300]}...`"
-            bot.edit_message_text(error_text, message.chat.id, status_msg.message_id)
+        me, p_sess, _ = run_async(verify_file())
+        if me: process_successful_login(message, status_msg, me, p_sess, "File")
+        else: bot.edit_message_text("❌ مـلـف مـعـطـوب أو فـشـل الـفـحـص.", message.chat.id, status_msg.message_id)
 
-    # 📌 حالة إرسال ملف ZIP يحتوي على مجموعة جلسات .session
+    # 📌 حالة إرسال ملف ZIP
     elif file_name.endswith(".zip"):
-        initial_text = generate_progress_text(0, 1)
-        initial_markup = generate_progress_markup(0, 1, 0, 0)
-        status_msg = bot.reply_to(message, initial_text, reply_markup=initial_markup)
-
+        status_msg = bot.reply_to(message, generate_progress_text(0, 1), reply_markup=generate_progress_markup(0, 1, 0, 0))
         extract_dir = f"tmp_{message.from_user.id}_{int(time.time())}"
         os.makedirs(extract_dir, exist_ok=True)
         zip_path = os.path.join(extract_dir, file_name)
-
-        with open(zip_path, 'wb') as f:
-            f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
+        with open(zip_path, 'wb') as f: f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
 
         try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref: zip_ref.extractall(extract_dir)
+            session_files = [os.path.join(r, f) for r, d, fs in os.walk(extract_dir) for f in fs if f.endswith(".session") and not f.startswith("._")]
+            total = len(session_files)
+            if total == 0: return bot.edit_message_text("❌ لا تـوجـد مـلـفـات .session", message.chat.id, status_msg.message_id)
 
-            session_files = []
-            for root, _, files in os.walk(extract_dir):
-                for file in files:
-                    if file.endswith(".session") and not file.startswith("._"):
-                        session_files.append(os.path.join(root, file))
-
-            total_sessions = len(session_files)
-            if total_sessions == 0:
-                bot.edit_message_text("❌ لا تـوجـد مـلـفـات `.session` صالحة داخـل الـ ZIP المـرسـل.", message.chat.id, status_msg.message_id)
-                return
-
-            bot.edit_message_text(generate_progress_text(0, total_sessions), message.chat.id, status_msg.message_id, reply_markup=generate_progress_markup(0, total_sessions, 0, 0))
-
-            async def process_zip_sessions_live():
+            async def process_zip_live():
                 state = {'processed': 0, 'success': 0, 'failed': 0}
-                sem = asyncio.Semaphore(4)  # فحص 4 حسابات سوياً لتجنب الحظر
-
+                sem = asyncio.Semaphore(50) # سرعة عالية أيضاً للـ ZIP
+                
                 async def live_updater():
-                    last_processed = -1
-                    while state['processed'] < total_sessions:
-                        if state['processed'] != last_processed:
-                            last_processed = state['processed']
-                            text = generate_progress_text(state['processed'], total_sessions)
-                            markup = generate_progress_markup(state['processed'], total_sessions, state['success'], state['failed'])
-                            try:
-                                bot.edit_message_text(text, message.chat.id, status_msg.message_id, reply_markup=markup)
-                            except Exception:
-                                pass
-                        await asyncio.sleep(1.5)
+                    lp = -1
+                    while state['processed'] < total:
+                        if state['processed'] != lp:
+                            lp = state['processed']
+                            try: bot.edit_message_text(generate_progress_text(state['processed'], total), message.chat.id, status_msg.message_id, reply_markup=generate_progress_markup(state['processed'], total, state['success'], state['failed']))
+                            except: pass
+                        await asyncio.sleep(2)
 
-                updater_task = asyncio.create_task(live_updater())
-
-                # دالة فحص الجلسة المستخرجة بالتحليل المباشر (Raw API)
-                async def check_extracted_session(sess_path):
+                u_task = asyncio.create_task(live_updater())
+                
+                async def check_one(p):
                     async with sem:
-                        session_name = os.path.splitext(os.path.basename(sess_path))[0]
-                        print(f"🔄 جاري تحليل وفحص ملف: {session_name}.session")
-
-                        is_success = False
-                        client = None
+                        ok = False
                         try:
-                            # 1. استخراج مفتاح auth_key والـ dc_id بشكل مباشر دون استيراد ملف SQLite بالعميل
-                            session_str, err = get_pyrogram_session_string_from_sqlite(sess_path, API_ID)
-                            if not session_str:
-                                raise ValueError(f"فشل التحويل إلى كود جلسة: {err}")
-
-                            # 2. إنشاء كائن العميل في الذاكرة بالكامل لمنع تصادم وقفل قواعد البيانات على القرص
-                            client = Client(name=session_name, session_string=session_str, api_id=API_ID, api_hash=API_HASH, in_memory=True)
-
-                            await asyncio.wait_for(client.connect(), timeout=12)
-                            me = await client.get_me()
-                            p_sess = await client.export_session_string()
-                            await client.disconnect()
-
-                            if me and not check_duplicate(message.from_user.id, me.id):
-                                save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", p_sess, "", "ZIP")
-                                is_success = True
-                                print(f"✅ نجح الفحص والاتصال للحساب: {me.first_name} ({me.id})")
-                        except Exception as e:
-                            # 📌 إطلاق كامل تفاصيل الخطأ مباشرة في سجلات ريندر (Render Logs)
-                            print(f"❌ فشل فحص ملف الجلسة: {session_name}.session")
-                            print(f"--- تفاصيل الأخطاء الكاملة لوحدة Render ---")
-                            traceback.print_exc()
-                            print(f"-------------------------------------------")
-
-                            try:
-                                if client and client.is_connected:
-                                    await client.disconnect()
-                            except Exception:
-                                pass
-
+                            s_str, _ = get_pyrogram_session_string_from_sqlite(p, API_ID)
+                            if s_str:
+                                client = Client(f"z_{int(time.time()*1000)}", session_string=s_str, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+                                await asyncio.wait_for(client.connect(), timeout=12)
+                                me = await client.get_me()
+                                if me and not check_duplicate(message.from_user.id, me.id):
+                                    save_account(message.from_user.id, me.phone_number or "Unknown", me.id, me.first_name or "User", s_str, "", "ZIP")
+                                    ok = True
+                                await client.disconnect()
+                        except: pass
                         state['processed'] += 1
-                        if is_success:
-                            state['success'] += 1
-                        else:
-                            state['failed'] += 1
+                        if ok: state['success'] += 1
+                        else: state['failed'] += 1
 
-                tasks = [check_extracted_session(f) for f in session_files]
-                await asyncio.gather(*tasks)
-
-                # إيقاف مهمة التحديث الحي بعد انتهاء الفحص
-                updater_task.cancel()
-                try:
-                    await updater_task
-                except asyncio.CancelledError:
-                    pass
-
+                await asyncio.gather(*[check_one(f) for f in session_files])
+                u_task.cancel()
                 return state['success'], state['failed']
 
-            # بدء الفحص
-            success_count, failed_count = run_async(process_zip_sessions_live())
-
-            final_text = (
-                f"🛂┊ تـمـت عـمـلـيـة فـحـص مـلـف الـ ZIP بـنـجـاح!\n\n"
-                f"📊 **الإحـصـائـيـة الـنـهـائـيـة:**\n"
-                f"⎉╎ إجـمـالـي الـجـلـسـات: {total_sessions}\n"
-                f"✅ الـشـغـالـة (نـجـحـت): {success_count}\n"
-                f"❌ الـمـعـطـوبـة (فـشـلـت): {failed_count}\n\n"
-                f"⬇️ تـم الـرجـوع لـلـقـائـمـة الـرئـيـسـيـة، تـحـكـم بـالـحـسـابـات مـن الأسـفـل:"
-            )
-            bot.edit_message_text(final_text, message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
-
-        except Exception as e:
-            err_details = traceback.format_exc()
-            print(f"❌ خطأ عام أثناء معالجة ملف ZIP:\n{err_details}")
-            bot.edit_message_text(f"❌ مـلـف ZIP غـيـر صـالـح أو حـدث خـطـأ:\n{str(e)}", message.chat.id, status_msg.message_id)
-        finally:
-            shutil.rmtree(extract_dir, ignore_errors=True)
-
+            s_count, f_count = run_async(process_zip_live())
+            bot.edit_message_text(f"🛂┊ تـم انـتـهـاء فـحـص ZIP !\nالناجحة: {s_count}\nالفاشلة: {f_count}", message.chat.id, status_msg.message_id, reply_markup=home_keyboard(message.from_user.id))
+        except Exception as e: bot.edit_message_text(f"❌ خطأ: {str(e)}", message.chat.id, status_msg.message_id)
+        finally: shutil.rmtree(extract_dir, ignore_errors=True)
 
 
 
