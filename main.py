@@ -388,6 +388,8 @@ LZT_API_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOjEwNjEwNDg5LCJpc3
 LZT_HEADERS = {"Authorization": f"Bearer {LZT_API_TOKEN}", "Accept": "application/json"}
 
 ACTIVE_SNIPERS = {} 
+PROCESSING_IDS = set() # لمنع تكرار الإشعار لنفس الحساب أثناء فترة الانتظار في الذاكرة
+
 if 'USER_STATES' not in globals():
     USER_STATES = {}
 
@@ -454,14 +456,15 @@ async def process_lzt_purchase(admin_id, result, price, task_name="شراء يد
         return False
 
 # ==========================================
-# 🚀 محرك القنص الشرس (High-Frequency Sniper)
+# 🚀 محرك القنص الشرس (المدمج بالانتظار والفحص)
 # ==========================================
 async def lzt_fast_buy_concurrent(session, item_id, price):
-    """دالة شراء مخصصة تعمل بشكل متوازي بدون إبطاء"""
+    """دالة شراء مخصصة تعمل بشكل متوازي وتسمح للموقع بفحص الحساب (تأخذ وقتاً للفحص)"""
     url = f"https://api.lzt.market/{item_id}/fast-buy"
     payload = {"price": price}
     try:
-        async with session.post(url, headers=LZT_HEADERS, data=payload, timeout=10) as resp:
+        # التايم أوت 25 ثانية لأن الموقع يأخذ وقت وهو يفحص الحساب قبل الرد
+        async with session.post(url, headers=LZT_HEADERS, data=payload, timeout=25) as resp:
             data = await resp.json()
             if "item" in data and "loginData" in data["item"]:
                 return True, data["item"], price
@@ -469,8 +472,40 @@ async def lzt_fast_buy_concurrent(session, item_id, price):
         pass
     return False, None, price
 
+async def delayed_purchase_logic(session, item_id, price, admin_id, task_name, delay_seconds, task_id):
+    """دالة الانتظار 10 ثواني في الذاكرة ثم إرسال طلب الشراء للموقع ليفحصه"""
+    try:
+        # إشعار العثور على الحساب (بداية الـ 10 ثواني في الذاكرة)
+        bot.send_message(admin_id, 
+            f"⚠️┊ **تـم صـيـد حـسـاب عـراقـي!**\n\n"
+            f"⎉╎ الـسـعـر الـفـعـلي: `{price}`\n"
+            f"⎉╎ كـود الـمـنـتـج: `{item_id}`\n\n"
+            f"•❐• جـاري الانـتـظـار **{delay_seconds} ثـوانـي** قـبـل إرسـال الـطـلـب... ⏳", parse_mode="Markdown")
+        
+        # الانتظار في ذاكرة البوت قبل لمس زر الشراء
+        await asyncio.sleep(delay_seconds)
+        
+        # بعد 10 ثواني، نضغط شراء (وهنا الموقع سيبدأ الفحص الخاص به ويأخذ وقت إضافي)
+        success, item_data, final_price = await lzt_fast_buy_concurrent(session, item_id, price)
+        
+        if success:
+            if task_id in ACTIVE_SNIPERS:
+                ACTIVE_SNIPERS[task_id]["bought_count"] = ACTIVE_SNIPERS[task_id].get("bought_count", 0) + 1
+            await process_lzt_purchase(admin_id, item_data, final_price, task_name)
+        else:
+            # رسالة الفشل والتعويض
+            bot.send_message(admin_id, 
+                f"❌┊ **تـم الانـتـظـار والـفـحـص ولـكـن ودع الـحـسـاب!**\n"
+                f"•❐• اسـتـعـدت `{price}` ✨", parse_mode="Markdown")
+    except Exception:
+        pass
+    finally:
+        # فك الحظر عن الآيدي لكي يكتشفه مجدداً إذا تم عرضه مرة أخرى
+        if item_id in PROCESSING_IDS:
+            PROCESSING_IDS.remove(item_id)
+
 async def sniper_worker(task_id, admin_id, task_name, filters, target_count, required_hours=0):
-    bought_count = 0
+    ACTIVE_SNIPERS[task_id]["bought_count"] = 0
     bot.send_message(admin_id, f"🚀┊ **تـم تـشـغـيـل الـقـنـاص الـشـرس:** `{task_name}`\n•❐• الـهـدف: {target_count} حـسـاب | يـعـمـل بـنـظـام الـهـجـوم الـمـتـوازي ⚡️.")
 
     clean_filters = {"currency": "usd"} 
@@ -478,10 +513,9 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
         if str(value).lower() not in ["nomatter", "الكل", "any", "", "none"]:
             clean_filters[key] = value
 
-    # استخدام جلسة اتصال واحدة مفتوحة لزيادة سرعة الـ Request بشكل هائل
-    connector = aiohttp.TCPConnector(limit=50) # السماح بـ 50 اتصال متوازي
+    connector = aiohttp.TCPConnector(limit=50) 
     async with aiohttp.ClientSession(connector=connector) as session:
-        while ACTIVE_SNIPERS.get(task_id) and bought_count < target_count:
+        while ACTIVE_SNIPERS.get(task_id) and ACTIVE_SNIPERS[task_id].get("bought_count", 0) < target_count:
             try:
                 # 1. البحث السريع
                 items = []
@@ -490,47 +524,61 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
                         data = await resp.json()
                         items = data.get("items", [])
                     elif resp.status == 429:
-                        await asyncio.sleep(4) # راحة قصيرة إذا غضب السيرفر
+                        await asyncio.sleep(4) 
                         continue
 
                 # 2. فلترة الحسابات الصالحة في كسر من الثانية
                 valid_items = []
                 for item in items:
+                    if item['item_id'] in PROCESSING_IDS: 
+                        continue
+                        
                     published_date = item.get('published_date') or item.get('date', time.time())
                     age_hours = (time.time() - published_date) / 3600
                     if required_hours > 0 and age_hours < required_hours: continue
                     valid_items.append(item)
 
                 if valid_items:
-                    # نأخذ فقط العدد المتبقي المطلوب لتجنب شراء زائد
-                    needed = target_count - bought_count
+                    needed = target_count - ACTIVE_SNIPERS[task_id].get("bought_count", 0)
                     targets_to_buy = valid_items[:needed]
 
                     if targets_to_buy:
-                        # 3. إطلاق صواريخ الشراء في نفس اللحظة (Concurrency)
-                        buy_tasks = [lzt_fast_buy_concurrent(session, item['item_id'], float(item['price'])) for item in targets_to_buy]
-                        results = await asyncio.gather(*buy_tasks)
+                        delay_seconds = 0
+                        # تحديد وقت الانتظار بناءً على اسم المهمة
+                        if "10 ثواني" in task_name: delay_seconds = 10
 
-                        # 4. معالجة النتائج وإرسالها لتسجيل الجلسة بالخلفية
-                        for success, item_data, price in results:
-                            if success:
-                                bought_count += 1
-                                # ⚡️ المعالجة في الخلفية لكي لا يتوقف القناص عن دورته
-                                asyncio.create_task(process_lzt_purchase(admin_id, item_data, price, task_name))
+                        if delay_seconds > 0:
+                            # ⚡️ مسار الانتظار والمراقبة
+                            for item in targets_to_buy:
+                                PROCESSING_IDS.add(item['item_id'])
+                                asyncio.create_task(delayed_purchase_logic(
+                                    session, item['item_id'], float(item['price']), admin_id, task_name, delay_seconds, task_id
+                                ))
+                            await asyncio.sleep(2)
+                        else:
+                            # ⚡️ مسار الشراء الفوري (الموقع لا يزال سيفحص الحساب)
+                            buy_tasks = [lzt_fast_buy_concurrent(session, item['item_id'], float(item['price'])) for item in targets_to_buy]
+                            results = await asyncio.gather(*buy_tasks)
 
-                        await asyncio.sleep(2) # استراحة بسيطة بعد الهجوم المباشر
+                            for success, item_data, price in results:
+                                if success:
+                                    ACTIVE_SNIPERS[task_id]["bought_count"] += 1
+                                    asyncio.create_task(process_lzt_purchase(admin_id, item_data, price, task_name))
+
+                            await asyncio.sleep(2)
                 else:
-                    await asyncio.sleep(6) # بحث كل 6 ثواني إذا لم يجد شيئاً
+                    await asyncio.sleep(6) 
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except Exception:
                 await asyncio.sleep(5)
 
     if task_id in ACTIVE_SNIPERS:
+        final_count = ACTIVE_SNIPERS[task_id].get("bought_count", 0)
         del ACTIVE_SNIPERS[task_id]
-        if bought_count >= target_count:
-            bot.send_message(admin_id, f"🏁┊ **اكـتـمـلـت مـهـمـة الـقـنـاص الـشـرس:** `{task_name}`\n•❐• تـم شـراء: {bought_count} حـسـاب بـنـجـاح ⚡️")
+        if final_count >= target_count:
+            bot.send_message(admin_id, f"🏁┊ **اكـتـمـلـت مـهـمـة الـقـنـاص الـشـرس:** `{task_name}`\n•❐• تـم شـراء: {final_count} حـسـاب بـنـجـاح ⚡️")
 
 def start_sniper_background(admin_id, task_name, filters, target_count=1, required_hours=0):
     task_id = f"task_{int(time.time())}_{admin_id}"
@@ -550,7 +598,7 @@ def start_sniper_background(admin_id, task_name, filters, target_count=1, requir
         finally:
             loop.close()
 
-    ACTIVE_SNIPERS[task_id] = {"name": task_name, "task": None, "loop": None, "filters": filters}
+    ACTIVE_SNIPERS[task_id] = {"name": task_name, "task": None, "loop": None, "filters": filters, "bought_count": 0}
 
     t = threading.Thread(target=background_runner, daemon=True)
     t.start()
@@ -558,7 +606,6 @@ def start_sniper_background(admin_id, task_name, filters, target_count=1, requir
 # ==========================================
 # 📱 دوال الشراء اليدوي واستكشاف الحسابات
 # ==========================================
-# (هذه مخصصة للأزرار ولا تؤثر على سرعة القناص)
 async def lzt_search_accounts_manual(filters):
     url = "https://api.lzt.market/telegram"
     clean_filters = {"currency": "usd"} 
@@ -580,7 +627,8 @@ async def lzt_fast_buy_manual(item_id, price):
     payload = {"price": price}
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=LZT_HEADERS, data=payload, timeout=20) as resp:
+            # التايم أوت 25 لنفس السبب (للفحص)
+            async with session.post(url, headers=LZT_HEADERS, data=payload, timeout=25) as resp:
                 data = await resp.json()
                 if "errors" in data:
                     return False, data["errors"][0]
@@ -597,7 +645,9 @@ def lzt_main_keyboard():
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🎯 صـيـد ID 8 الـسـريـع", callback_data="qs_start:lzt_id8"))
     markup.row(InlineKeyboardButton("🕰️ صـيـد ID 9 الأقـدم", callback_data="qs_start:lzt_id9"))
-    markup.row(InlineKeyboardButton("🇮🇶 صـيـد الـعـراق العشوائي (12₽)", callback_data="qs_start:lzt_iraq"))
+    markup.row(InlineKeyboardButton("🇮🇶 صـيـد الـعـراق (فوري) ⚡️", callback_data="qs_start:lzt_iraq"))
+    markup.row(InlineKeyboardButton("🇮🇶 عراقي 12₽ (10 ثواني) ⏳", callback_data="qs_start:lzt_iraq_12_10"))
+    markup.row(InlineKeyboardButton("🇮🇶 عراقي 15₽ (10 ثواني) ⏳", callback_data="qs_start:lzt_iraq_15_10"))
     markup.row(InlineKeyboardButton("👑 الـتـخـصـيـص الـمـتـقـدم (The Boss)", callback_data="lzt_boss_menu"))
 
     if ACTIVE_SNIPERS:
@@ -654,8 +704,9 @@ def quick_sniper_step_2(message):
 
     snipe_type = USER_STATES[uid].get("quick_snipe_type", "")
 
-    if snipe_type == "lzt_iraq":
-        execute_quick_snipe(uid, 0, 12, message)
+    # إذا كان عراقي بكل أنواعه، يتجاوز خطوة طلب السعر
+    if snipe_type in ["lzt_iraq", "lzt_iraq_12_10", "lzt_iraq_15_10"]:
+        execute_quick_snipe(uid, 0, 0, message)
         return
 
     if snipe_type == "lzt_id8":
@@ -722,15 +773,14 @@ def execute_quick_snipe(uid, pmin, pmax, message_obj):
         task_name = f"🕰️ صيد ID 9 ({pmin}$-{pmax}$)"
         filters = {**base_filters, "dig_min": 9, "dig_max": 9}
     elif snipe_type == "lzt_iraq":
-        task_name = f"🇮🇶 صيد العراق (≤ 12 RUB)"
-        filters = {
-            "pmax": 12,                
-            "currency": "rub",         
-            "spam": "no",              
-            "password": "no",          
-            "order_by": "price_to_up", 
-            "country[]": "IQ"          
-        }
+        task_name = f"🇮🇶 صيد العراق (فوري)"
+        filters = {"pmax": 12, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": "IQ"}
+    elif snipe_type == "lzt_iraq_12_10":
+        task_name = f"🇮🇶 عراقي 12₽ (10 ثواني)"
+        filters = {"pmax": 12, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": "IQ"}
+    elif snipe_type == "lzt_iraq_15_10":
+        task_name = f"🇮🇶 عراقي 15₽ (10 ثواني)"
+        filters = {"pmax": 15, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": "IQ"}
     else:
         return bot.send_message(message_obj.chat.id, "❌┊ نـوع الـصـيـد غـيـر مـعـروف.")
 
@@ -1023,10 +1073,6 @@ def manual_buy_action(call):
             bot.edit_message_text(f"❌┊ فـشـل الـشـراء:\n`{result}`", call.message.chat.id, call.message.message_id)
 
     run_async(do_buy())
-
-
-
-
 
 
 
@@ -3031,25 +3077,25 @@ def generate_progress_markup(processed, total, success, failed, frozen=0):
 def handle_files(message):
     if not is_allowed(message.from_user.id): return
     file_name = message.document.file_name.lower()
-    
+
     # 📌 حالة إرسال ملف .txt يحتوي على hex:dc (الفحص السريع)
     if file_name.endswith(".txt"):
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         lines = downloaded_file.decode('utf-8').splitlines()
-        
+
         valid_sessions = []
         for line in lines:
             if ":" in line:
                 parts = line.split(":")
                 if len(parts[0]) >= 512: # التأكد أنه Hex
                     valid_sessions.append((parts[0].strip(), parts[1].strip()))
-        
+
         total = len(valid_sessions)
         if total == 0: return bot.reply_to(message, "❌ الملف لا يحتوي على تنسيق `hex:dc` صحيح.")
-        
+
         status_msg = bot.reply_to(message, generate_progress_text(0, total), reply_markup=generate_progress_markup(0, total, 0, 0))
-        
+
         async def process_txt_fast():
             state = {'processed': 0, 'success': 0, 'failed': 0}
             sem = asyncio.Semaphore(50) # فحص 50 حساب متوازي كما طلبت
@@ -3094,7 +3140,7 @@ def handle_files(message):
         status_msg = bot.reply_to(message, "•❐• جـاري قـراءة مـلـف الـجـلـسـة...", parse_mode="Markdown")
         temp_file_path = f"sess_{message.from_user.id}_{int(time.time())}.session"
         with open(temp_file_path, 'wb') as f: f.write(bot.download_file(bot.get_file(message.document.file_id).file_path))
-        
+
         async def verify_file():
             session_str, _ = get_pyrogram_session_string_from_sqlite(temp_file_path, API_ID)
             if not session_str: return None, None, "فشل الاستخراج"
@@ -3129,7 +3175,7 @@ def handle_files(message):
             async def process_zip_live():
                 state = {'processed': 0, 'success': 0, 'failed': 0}
                 sem = asyncio.Semaphore(50) # سرعة عالية أيضاً للـ ZIP
-                
+
                 async def live_updater():
                     lp = -1
                     while state['processed'] < total:
@@ -3140,7 +3186,7 @@ def handle_files(message):
                         await asyncio.sleep(2)
 
                 u_task = asyncio.create_task(live_updater())
-                
+
                 async def check_one(p):
                     async with sem:
                         ok = False
