@@ -388,7 +388,7 @@ LZT_API_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOjEwNjEwNDg5LCJpc3
 LZT_HEADERS = {"Authorization": f"Bearer {LZT_API_TOKEN}", "Accept": "application/json"}
 
 ACTIVE_SNIPERS = {} 
-PROCESSING_IDS = set() # لمنع تكرار الإشعار لنفس الحساب أثناء فترة الانتظار في الذاكرة
+PROCESSING_IDS = set() 
 
 if 'USER_STATES' not in globals():
     USER_STATES = {}
@@ -421,7 +421,6 @@ async def lzt_get_usd_balance():
         return 0.0, 0.0
 
 async def process_lzt_purchase(admin_id, result, price, task_name="شراء يدوي"):
-    """تعمل في الخلفية لإنشاء الجلسة لكي لا تعطل القناص عن الشراء"""
     try:
         login_data = result['loginData']
         hex_key = login_data.get('login', '')
@@ -459,11 +458,10 @@ async def process_lzt_purchase(admin_id, result, price, task_name="شراء يد
 # 🚀 محرك القنص الشرس (المدمج بالانتظار والفحص)
 # ==========================================
 async def lzt_fast_buy_concurrent(session, item_id, price):
-    """دالة شراء مخصصة تعمل بشكل متوازي وتسمح للموقع بفحص الحساب (تأخذ وقتاً للفحص)"""
     url = f"https://api.lzt.market/{item_id}/fast-buy"
     payload = {"price": price}
     try:
-        # التايم أوت 25 ثانية لأن الموقع يأخذ وقت وهو يفحص الحساب قبل الرد
+        # التايم أوت 25 ثانية لأن الموقع سيقوم بفحص الحساب قبل الرد
         async with session.post(url, headers=LZT_HEADERS, data=payload, timeout=25) as resp:
             data = await resp.json()
             if "item" in data and "loginData" in data["item"]:
@@ -473,19 +471,16 @@ async def lzt_fast_buy_concurrent(session, item_id, price):
     return False, None, price
 
 async def delayed_purchase_logic(session, item_id, price, admin_id, task_name, delay_seconds, task_id):
-    """دالة الانتظار 10 ثواني في الذاكرة ثم إرسال طلب الشراء للموقع ليفحصه"""
     try:
-        # إشعار العثور على الحساب (بداية الـ 10 ثواني في الذاكرة)
         bot.send_message(admin_id, 
-            f"⚠️┊ **تـم صـيـد حـسـاب عـراقـي!**\n\n"
+            f"⚠️┊ **تـم صـيـد حـسـاب مـطـابـق!**\n\n"
             f"⎉╎ الـسـعـر الـفـعـلي: `{price}`\n"
             f"⎉╎ كـود الـمـنـتـج: `{item_id}`\n\n"
-            f"•❐• جـاري الانـتـظـار **{delay_seconds} ثـوانـي** قـبـل إرسـال الـطـلـب... ⏳", parse_mode="Markdown")
+            f"•❐• جـاري الانـتـظـار **{delay_seconds} ثـوانـي** فـي الـذاكـرة قـبـل إرسـال الـطـلـب... ⏳", parse_mode="Markdown")
         
-        # الانتظار في ذاكرة البوت قبل لمس زر الشراء
         await asyncio.sleep(delay_seconds)
         
-        # بعد 10 ثواني، نضغط شراء (وهنا الموقع سيبدأ الفحص الخاص به ويأخذ وقت إضافي)
+        # بعد الانتظار، نرسل طلب الشراء ليقوم الموقع بالفحص
         success, item_data, final_price = await lzt_fast_buy_concurrent(session, item_id, price)
         
         if success:
@@ -493,14 +488,12 @@ async def delayed_purchase_logic(session, item_id, price, admin_id, task_name, d
                 ACTIVE_SNIPERS[task_id]["bought_count"] = ACTIVE_SNIPERS[task_id].get("bought_count", 0) + 1
             await process_lzt_purchase(admin_id, item_data, final_price, task_name)
         else:
-            # رسالة الفشل والتعويض
             bot.send_message(admin_id, 
                 f"❌┊ **تـم الانـتـظـار والـفـحـص ولـكـن ودع الـحـسـاب!**\n"
                 f"•❐• اسـتـعـدت `{price}` ✨", parse_mode="Markdown")
     except Exception:
         pass
     finally:
-        # فك الحظر عن الآيدي لكي يكتشفه مجدداً إذا تم عرضه مرة أخرى
         if item_id in PROCESSING_IDS:
             PROCESSING_IDS.remove(item_id)
 
@@ -508,16 +501,22 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
     ACTIVE_SNIPERS[task_id]["bought_count"] = 0
     bot.send_message(admin_id, f"🚀┊ **تـم تـشـغـيـل الـقـنـاص الـشـرس:** `{task_name}`\n•❐• الـهـدف: {target_count} حـسـاب | يـعـمـل بـنـظـام الـهـجـوم الـمـتـوازي ⚡️.")
 
-    clean_filters = {"currency": "usd"} 
+    # بناء الفلاتر بطريقة متوافقة مع إرسال عدة دول للموقع
+    currency_val = filters.get("currency", "usd")
+    clean_filters = [("currency", currency_val)]
     for key, value in filters.items():
-        if str(value).lower() not in ["nomatter", "الكل", "any", "", "none"]:
-            clean_filters[key] = value
+        if key == "currency": continue
+        if isinstance(value, list):
+            for v in value:
+                clean_filters.append((key, v))
+        else:
+            if str(value).lower() not in ["nomatter", "الكل", "any", "", "none"]:
+                clean_filters.append((key, value))
 
     connector = aiohttp.TCPConnector(limit=50) 
     async with aiohttp.ClientSession(connector=connector) as session:
         while ACTIVE_SNIPERS.get(task_id) and ACTIVE_SNIPERS[task_id].get("bought_count", 0) < target_count:
             try:
-                # 1. البحث السريع
                 items = []
                 async with session.get("https://api.lzt.market/telegram", headers=LZT_HEADERS, params=clean_filters, timeout=15) as resp:
                     if resp.status == 200:
@@ -527,7 +526,6 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
                         await asyncio.sleep(4) 
                         continue
 
-                # 2. فلترة الحسابات الصالحة في كسر من الثانية
                 valid_items = []
                 for item in items:
                     if item['item_id'] in PROCESSING_IDS: 
@@ -544,11 +542,9 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
 
                     if targets_to_buy:
                         delay_seconds = 0
-                        # تحديد وقت الانتظار بناءً على اسم المهمة
                         if "10 ثواني" in task_name: delay_seconds = 10
 
                         if delay_seconds > 0:
-                            # ⚡️ مسار الانتظار والمراقبة
                             for item in targets_to_buy:
                                 PROCESSING_IDS.add(item['item_id'])
                                 asyncio.create_task(delayed_purchase_logic(
@@ -556,7 +552,7 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
                                 ))
                             await asyncio.sleep(2)
                         else:
-                            # ⚡️ مسار الشراء الفوري (الموقع لا يزال سيفحص الحساب)
+                            # شراء فوري مع فحص الموقع
                             buy_tasks = [lzt_fast_buy_concurrent(session, item['item_id'], float(item['price'])) for item in targets_to_buy]
                             results = await asyncio.gather(*buy_tasks)
 
@@ -582,15 +578,12 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
 
 def start_sniper_background(admin_id, task_name, filters, target_count=1, required_hours=0):
     task_id = f"task_{int(time.time())}_{admin_id}"
-
     def background_runner():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
         ACTIVE_SNIPERS[task_id]["loop"] = loop
         task = loop.create_task(sniper_worker(task_id, admin_id, task_name, filters, target_count, required_hours))
         ACTIVE_SNIPERS[task_id]["task"] = task
-
         try:
             loop.run_until_complete(task)
         except asyncio.CancelledError:
@@ -599,7 +592,6 @@ def start_sniper_background(admin_id, task_name, filters, target_count=1, requir
             loop.close()
 
     ACTIVE_SNIPERS[task_id] = {"name": task_name, "task": None, "loop": None, "filters": filters, "bought_count": 0}
-
     t = threading.Thread(target=background_runner, daemon=True)
     t.start()
 
@@ -608,10 +600,16 @@ def start_sniper_background(admin_id, task_name, filters, target_count=1, requir
 # ==========================================
 async def lzt_search_accounts_manual(filters):
     url = "https://api.lzt.market/telegram"
-    clean_filters = {"currency": "usd"} 
+    currency_val = filters.get("currency", "usd")
+    clean_filters = [("currency", currency_val)]
     for key, value in filters.items():
-        if str(value).lower() not in ["nomatter", "الكل", "any", "", "none"]:
-            clean_filters[key] = value
+        if key == "currency": continue
+        if isinstance(value, list):
+            for v in value:
+                clean_filters.append((key, v))
+        else:
+            if str(value).lower() not in ["nomatter", "الكل", "any", "", "none"]:
+                clean_filters.append((key, value))
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=LZT_HEADERS, params=clean_filters, timeout=20) as resp:
@@ -627,7 +625,6 @@ async def lzt_fast_buy_manual(item_id, price):
     payload = {"price": price}
     try:
         async with aiohttp.ClientSession() as session:
-            # التايم أوت 25 لنفس السبب (للفحص)
             async with session.post(url, headers=LZT_HEADERS, data=payload, timeout=25) as resp:
                 data = await resp.json()
                 if "errors" in data:
@@ -645,9 +642,11 @@ def lzt_main_keyboard():
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🎯 صـيـد ID 8 الـسـريـع", callback_data="qs_start:lzt_id8"))
     markup.row(InlineKeyboardButton("🕰️ صـيـد ID 9 الأقـدم", callback_data="qs_start:lzt_id9"))
-    markup.row(InlineKeyboardButton("🇮🇶 صـيـد الـعـراق (فوري) ⚡️", callback_data="qs_start:lzt_iraq"))
+    markup.row(InlineKeyboardButton("🇮🇶 صـيـد الـعـراق (12₽ فوري) ⚡️", callback_data="qs_start:lzt_iraq"))
+    markup.row(InlineKeyboardButton("🇮🇶 صـيـد الـعـراق (15₽ فوري) ⚡️", callback_data="qs_start:lzt_iraq_15"))
     markup.row(InlineKeyboardButton("🇮🇶 عراقي 12₽ (10 ثواني) ⏳", callback_data="qs_start:lzt_iraq_12_10"))
     markup.row(InlineKeyboardButton("🇮🇶 عراقي 15₽ (10 ثواني) ⏳", callback_data="qs_start:lzt_iraq_15_10"))
+    markup.row(InlineKeyboardButton("🌍 تخصيص الدول (فوري) ⚡️", callback_data="qs_start:lzt_custom_country"))
     markup.row(InlineKeyboardButton("👑 الـتـخـصـيـص الـمـتـقـدم (The Boss)", callback_data="lzt_boss_menu"))
 
     if ACTIVE_SNIPERS:
@@ -704,9 +703,18 @@ def quick_sniper_step_2(message):
 
     snipe_type = USER_STATES[uid].get("quick_snipe_type", "")
 
-    # إذا كان عراقي بكل أنواعه، يتجاوز خطوة طلب السعر
-    if snipe_type in ["lzt_iraq", "lzt_iraq_12_10", "lzt_iraq_15_10"]:
+    if snipe_type in ["lzt_iraq", "lzt_iraq_15", "lzt_iraq_12_10", "lzt_iraq_15_10"]:
         execute_quick_snipe(uid, 0, 0, message)
+        return
+
+    if snipe_type == "lzt_custom_country":
+        text = (
+            "🌍┊ **أرْسـل اخـتـصـار الـدولـة أو الـدول**\n\n"
+            "⎉╎ مـثـال لـدولـة واحـدة: `QA`\n"
+            "⎉╎ مـثـال لـعـدة دول: `BH CA QA`"
+        )
+        msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, quick_sniper_step_custom_country)
         return
 
     if snipe_type == "lzt_id8":
@@ -729,6 +737,44 @@ def quick_sniper_step_2(message):
     )
     msg = bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
     bot.register_next_step_handler(msg, quick_sniper_step_3_text)
+
+def quick_sniper_step_custom_country(message):
+    uid = message.from_user.id
+    countries = message.text.strip().upper().split()
+    if not countries: return bot.send_message(message.chat.id, "❌┊ يـرجـى إرسـال رمـز دولـة صـحـيـح.")
+    USER_STATES[uid]["custom_countries"] = countries
+    
+    text = (
+        "💰┊ **أرْسـل الـسـعـر بـالـروبـل الـروسـي (RUB)**\n\n"
+        "⎉╎ إرسـال رقـم واحـد (يـكـون الـحـد الأقـصـى) مـثـال: `15`\n"
+        "⎉╎ إرسـال رقـمـيـن (أدنـى وأقـصـى) مـثـال: `12 17`"
+    )
+    msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+    bot.register_next_step_handler(msg, quick_sniper_step_custom_price)
+
+def quick_sniper_step_custom_price(message):
+    uid = message.from_user.id
+    text_clean = message.text.replace(",", ".").replace("،", ".")
+    numbers = re.findall(r"\d+\.\d+|\d+", text_clean)
+    
+    if not numbers:
+        bot.send_message(message.chat.id, "❌┊ لـم أتـمـكـن مـن قـراءة الـسـعـر.", parse_mode="Markdown")
+        return
+    
+    try:
+        if len(numbers) == 1:
+            pmin = 0.0
+            pmax = float(numbers[0])
+        else:
+            v1, v2 = float(numbers[0]), float(numbers[1])
+            pmin, pmax = min(v1, v2), max(v1, v2)
+    except:
+        return bot.send_message(message.chat.id, "❌┊ حـدث خـطـأ فـي تـحـويـل الأرقـام.")
+        
+    try:
+        execute_quick_snipe(uid, pmin, pmax, message)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌┊ حـدث خـطـأ:\n`{e}`", parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: call.data == "qs_price_default")
 def quick_sniper_step_3_btn(call):
@@ -764,23 +810,40 @@ def execute_quick_snipe(uid, pmin, pmax, message_obj):
     if not snipe_type:
         return bot.send_message(message_obj.chat.id, "❌┊ فُـقـدت بـيـانـات الـجـلـسـة.")
 
-    base_filters = {"pmin": pmin, "pmax": pmax, "spam": "no", "password": "no", "order_by": "pdate_to_up"}
+    base_filters = {"pmin": pmin, "pmax": pmax, "spam": "no", "password": "no", "order_by": "price_to_up"}
 
     if snipe_type == "lzt_id8":
         task_name = f"🎯 صيد ID 8 ({pmin}$-{pmax}$)"
-        filters = {**base_filters, "dig_min": 8, "dig_max": 8}
+        filters = {**base_filters, "dig_min": 8, "dig_max": 8, "order_by": "pdate_to_up"}
     elif snipe_type == "lzt_id9":
         task_name = f"🕰️ صيد ID 9 ({pmin}$-{pmax}$)"
-        filters = {**base_filters, "dig_min": 9, "dig_max": 9}
+        filters = {**base_filters, "dig_min": 9, "dig_max": 9, "order_by": "pdate_to_up"}
     elif snipe_type == "lzt_iraq":
-        task_name = f"🇮🇶 صيد العراق (فوري)"
-        filters = {"pmax": 12, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": "IQ"}
+        task_name = f"🇮🇶 صيد العراق 12₽ (فوري)"
+        filters = {"pmax": 12, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": ["IQ"]}
+    elif snipe_type == "lzt_iraq_15":
+        task_name = f"🇮🇶 صيد العراق 15₽ (فوري)"
+        filters = {"pmax": 15, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": ["IQ"]}
     elif snipe_type == "lzt_iraq_12_10":
         task_name = f"🇮🇶 عراقي 12₽ (10 ثواني)"
-        filters = {"pmax": 12, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": "IQ"}
+        filters = {"pmax": 12, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": ["IQ"]}
     elif snipe_type == "lzt_iraq_15_10":
         task_name = f"🇮🇶 عراقي 15₽ (10 ثواني)"
-        filters = {"pmax": 15, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": "IQ"}
+        filters = {"pmax": 15, "currency": "rub", "spam": "no", "password": "no", "order_by": "price_to_up", "country[]": ["IQ"]}
+    elif snipe_type == "lzt_custom_country":
+        countries = state.get("custom_countries", [])
+        c_label = " ".join(countries)
+        task_name = f"🌍 صيد {c_label} ({pmax}₽ فوري)"
+        filters = {
+            "pmin": pmin,
+            "pmax": pmax, 
+            "currency": "rub", 
+            "spam": "no", 
+            "password": "no", 
+            "order_by": "price_to_up"
+        }
+        if countries:
+            filters["country[]"] = countries
     else:
         return bot.send_message(message_obj.chat.id, "❌┊ نـوع الـصـيـد غـيـر مـعـروف.")
 
@@ -997,7 +1060,7 @@ def boss_live_explore(call):
         "spam": state["spam"], "password": state["2fa"], "order_by": state["order"],
         "pmin": float(state["pmin"]), "pmax": float(state["pmax"])
     }
-    if state["country"] != "الكل": filters["country[]"] = state["country"]
+    if state["country"] != "الكل": filters["country[]"] = [state["country"]]
 
     items = run_async(lzt_search_accounts_manual(filters))
 
@@ -1047,7 +1110,7 @@ def boss_start(call):
         "spam": state["spam"], "password": state["2fa"], "order_by": state["order"],
         "pmin": float(state["pmin"]), "pmax": float(state["pmax"])
     }
-    if state["country"] != "الكل": filters["country[]"] = state["country"]
+    if state["country"] != "الكل": filters["country[]"] = [state["country"]]
 
     target_count = int(state.get("target_count", 1))
 
@@ -1073,7 +1136,6 @@ def manual_buy_action(call):
             bot.edit_message_text(f"❌┊ فـشـل الـشـراء:\n`{result}`", call.message.chat.id, call.message.message_id)
 
     run_async(do_buy())
-
 
 
 
@@ -3616,4 +3678,3 @@ if __name__ == "__main__":
         try:
             bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=15)
         except Exception as e:
-            time.sleep(3)
