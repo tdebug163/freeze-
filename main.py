@@ -475,12 +475,12 @@ async def delayed_purchase_logic(session, item_id, price, admin_id, task_name, d
             f"⎉╎ الـسـعـر الـفـعـلي: `{price}`\n"
             f"⎉╎ كـود الـمـنـتـج: `{item_id}`\n\n"
             f"•❐• جـاري الانـتـظـار **{delay_seconds} ثـوانـي** فـي الـذاكـرة قـبـل إرسـال الـطـلـب... ⏳", parse_mode="Markdown")
-        
+
         await asyncio.sleep(delay_seconds)
-        
+
         # بعد الانتظار، نرسل طلب الشراء ليقوم الموقع بالفحص
         success, item_data, final_price = await lzt_fast_buy_concurrent(session, item_id, price)
-        
+
         if success:
             if task_id in ACTIVE_SNIPERS:
                 ACTIVE_SNIPERS[task_id]["bought_count"] = ACTIVE_SNIPERS[task_id].get("bought_count", 0) + 1
@@ -528,7 +528,7 @@ async def sniper_worker(task_id, admin_id, task_name, filters, target_count, req
                 for item in items:
                     if item['item_id'] in PROCESSING_IDS: 
                         continue
-                        
+
                     published_date = item.get('published_date') or item.get('date', time.time())
                     age_hours = (time.time() - published_date) / 3600
                     if required_hours > 0 and age_hours < required_hours: continue
@@ -741,7 +741,7 @@ def quick_sniper_step_custom_country(message):
     countries = message.text.strip().upper().split()
     if not countries: return bot.send_message(message.chat.id, "❌┊ يـرجـى إرسـال رمـز دولـة صـحـيـح.")
     USER_STATES[uid]["custom_countries"] = countries
-    
+
     text = (
         "💰┊ **أرْسـل الـسـعـر بـالـروبـل الـروسـي (RUB)**\n\n"
         "⎉╎ إرسـال رقـم واحـد (يـكـون الـحـد الأقـصـى) مـثـال: `15`\n"
@@ -754,11 +754,11 @@ def quick_sniper_step_custom_price(message):
     uid = message.from_user.id
     text_clean = message.text.replace(",", ".").replace("،", ".")
     numbers = re.findall(r"\d+\.\d+|\d+", text_clean)
-    
+
     if not numbers:
         bot.send_message(message.chat.id, "❌┊ لـم أتـمـكـن مـن قـراءة الـسـعـر.", parse_mode="Markdown")
         return
-    
+
     try:
         if len(numbers) == 1:
             pmin = 0.0
@@ -768,7 +768,7 @@ def quick_sniper_step_custom_price(message):
             pmin, pmax = min(v1, v2), max(v1, v2)
     except:
         return bot.send_message(message.chat.id, "❌┊ حـدث خـطـأ فـي تـحـويـل الأرقـام.")
-        
+
     try:
         execute_quick_snipe(uid, pmin, pmax, message)
     except Exception as e:
@@ -1137,6 +1137,573 @@ def manual_buy_action(call):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+#داله التيك توك تبدا من هنا:::
+	
+	
+	
+	
+	
+	
+	
+import json
+import threading
+import time
+import requests
+import sqlite3
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import logging
+
+# ==========================================
+# ✦ إعدادات تيك توك المستقلة والمتغيرات ✦
+# ==========================================
+# (يتم استخدام LZT_HEADERS الخاصة بك المعرفة مسبقاً في ملفك للبحث عن الحسابات)
+
+tt_user_states = {} 
+ACTIVE_TT_SNIPERS = {} 
+ACTIVE_TT_GIFTERS = {} 
+
+# معرفات هدايا تيك توك (أمثلة قابلة للتعديل)
+GIFT_100_COINS = 5655 # هدية بـ 100 عملة
+GIFT_20_COINS = 5269  # هدية بـ 20 عملة
+
+# إنشاء قاعدة بيانات تيك توك المستقلة
+tt_conn = sqlite3.connect('tiktok_database.db', check_same_thread=False)
+tt_cursor = tt_conn.cursor()
+tt_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS tt_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id TEXT UNIQUE,
+        price REAL,
+        coins INTEGER,
+        followers INTEGER,
+        json_data TEXT,
+        cookies TEXT
+    )
+''')
+tt_conn.commit()
+
+# ==========================================
+# ✦ دوال التعامل مع تيك توك LZT API ✦
+# ==========================================
+def lzt_search_tiktok(pmin=None, pmax=None, coins_min=None, coins_max=None):
+    url = "https://api.lzt.market/tiktok"
+    params = {"cookie_login": "yes"} 
+    
+    if pmin is not None: params["pmin"] = pmin
+    if pmax is not None: params["pmax"] = pmax
+    if coins_min is not None: params["coins_min"] = coins_min
+    if coins_max is not None: params["coins_max"] = coins_max
+    
+    try:
+        req = requests.get(url, headers=LZT_HEADERS, params=params)
+        data = req.json()
+        if "items" in data:
+            return data["items"]
+        return []
+    except Exception as e:
+        logging.error(f"LZT Search Error: {e}")
+        return []
+
+def lzt_fast_buy(item_id, price):
+    url = f"https://api.lzt.market/{item_id}/fast-buy"
+    data = {"price": price}
+    
+    for _ in range(100): 
+        try:
+            req = requests.post(url, headers=LZT_HEADERS, data=data)
+            resp = req.json()
+            if "errors" in resp and "retry_request" in str(resp["errors"]):
+                time.sleep(1)
+                continue
+            if "item" in resp or "success" in resp:
+                return True
+        except:
+            pass
+        break
+    return False
+
+def lzt_get_account_data(item_id):
+    url = f"https://api.lzt.market/{item_id}"
+    try:
+        req = requests.get(url, headers=LZT_HEADERS)
+        return req.json().get("item", {})
+    except:
+        return {}
+
+# ==========================================
+# ✦ دوال التعامل مع تيك توك API (الحقيقية) ✦
+# ==========================================
+def parse_cookies_to_dict(json_str):
+    try:
+        data = json.loads(json_str)
+        cookies_dict = {}
+        for c in data:
+            cookies_dict[c['name']] = c['value']
+        return cookies_dict
+    except:
+        return None
+
+def tt_get_account_info(cookies_dict):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*"
+    }
+    try:
+        profile_url = "https://www.tiktok.com/api/user/detail/"
+        req = requests.get(profile_url, headers=headers, cookies=cookies_dict, timeout=10)
+        data = req.json()
+        followers = data.get("userInfo", {}).get("stats", {}).get("followerCount", 0)
+        
+        wallet_url = "https://www.tiktok.com/api/wallet/v1/balance/"
+        w_req = requests.get(wallet_url, headers=headers, cookies=cookies_dict, timeout=10)
+        w_data = w_req.json()
+        coins = w_data.get("data", {}).get("coins", 0) 
+        
+        return {"success": True, "followers": followers, "coins": coins}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def tt_get_live_room_id(username):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    url = f"https://www.tiktok.com/api/live/detail/?target_username={username}"
+    try:
+        req = requests.get(url, headers=headers, timeout=10)
+        data = req.json()
+        room_id = data.get("LiveRoomInfo", {}).get("room_id")
+        return room_id
+    except:
+        return None
+
+def tt_send_gift(room_id, gift_id, cookies_dict):
+    url = "https://webcast.tiktok.com/webcast/gift/send/"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    payload = {
+        "room_id": room_id,
+        "gift_id": gift_id,
+        "gift_count": 1
+    }
+    try:
+        req = requests.post(url, headers=headers, cookies=cookies_dict, data=payload, timeout=10)
+        data = req.json()
+        if data.get("status_code") == 0:
+            return True
+        return False
+    except:
+        return False
+
+# ==========================================
+# ✦ لوحات المفاتيح (Keyboards) ✦
+# ==========================================
+def tt_main_menu():
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("💸 رمي العملات على بث", callback_data="tt_throw_coins"),
+        InlineKeyboardButton("🔄 فحص الحسابات", callback_data="tt_check_accs")
+    )
+    markup.add(
+        InlineKeyboardButton("➕ إضافة حساب (JSON)", callback_data="tt_add_json"),
+        InlineKeyboardButton("📂 عرض الحسابات", callback_data="tt_view_accs")
+    )
+    markup.add(
+        InlineKeyboardButton("🛒 شــراء تـلـقـائـي", callback_data="tt_buy_menu")
+    )
+    markup.add(InlineKeyboardButton("🔙 رجـوع", callback_data="menu_terminate")) 
+    return markup
+
+def tt_buy_keyboard(chat_id):
+    markup = InlineKeyboardMarkup(row_width=1)
+    
+    fast_text = "⚡ شـراء سـريـع (8 روبـل وأقـل | 100+ عـمـلـة)"
+    custom_text = "⚙️ شـراء مـخـصـص"
+    
+    if chat_id in ACTIVE_TT_SNIPERS:
+        markup.add(InlineKeyboardButton("✅ جاري الشراء... (اضغط للإيقاف)", callback_data="tt_stop_sniper"))
+        return markup
+
+    markup.add(
+        InlineKeyboardButton(fast_text, callback_data="tt_buy_fast"),
+        InlineKeyboardButton(custom_text, callback_data="tt_buy_custom"),
+        InlineKeyboardButton("🔙 رجـوع", callback_data="tt_auto_main")
+    )
+    return markup
+
+# ==========================================
+# ✦ محرك البحث والشراء التلقائي (Sniper) ✦
+# ==========================================
+def tt_sniper_task(bot, chat_id, target_count, pmin, pmax, cmin, cmax, sniper_type):
+    bought_count = 0
+    stop_event = ACTIVE_TT_SNIPERS[chat_id]["stop_event"]
+    
+    t_type = "سـريـع ⚡" if sniper_type == "fast" else "مـخـصـص ⚙️"
+    
+    start_msg = (
+        f"**🎯┊بـدأت عـمـلـيـة الـمـراقـبـة والـصـيـد - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+        f"⎉╎الـعـدد الـمـطـلـوب ⩥ **{target_count}**\n"
+        f"⎉╎نـوع الـصـيـد ⩥ **{t_type}**"
+    )
+    bot.send_message(chat_id, start_msg, parse_mode="Markdown")
+    
+    while bought_count < target_count and not stop_event.is_set():
+        items = lzt_search_tiktok(pmin=pmin, pmax=pmax, coins_min=cmin, coins_max=cmax)
+        
+        for item in items:
+            if stop_event.is_set() or bought_count >= target_count:
+                break
+                
+            item_id = item["item_id"]
+            price = item["price"]
+            
+            tt_cursor.execute("SELECT item_id FROM tt_accounts WHERE item_id=?", (str(item_id),))
+            if tt_cursor.fetchone(): continue
+            
+            if lzt_fast_buy(item_id, price):
+                acc_data = lzt_get_account_data(item_id)
+                if not acc_data: continue
+                
+                coins = acc_data.get("tt_coins", 0)
+                followers = acc_data.get("tt_followers", 0)
+                cookies = acc_data.get("tt_cookie_login", "لا يوجد كوكيز")
+                json_dump = json.dumps(acc_data, ensure_ascii=False)
+                
+                tt_cursor.execute('''
+                    INSERT INTO tt_accounts (item_id, price, coins, followers, json_data, cookies)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (str(item_id), price, coins, followers, json_dump, str(cookies)))
+                tt_conn.commit()
+                
+                bought_count += 1
+                
+                hit_msg = (
+                    f"**🎉┊تـم صـيـد حـسـاب بـنـجـاح - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+                    f"⎉╎الـحـالـة ⩥ **({bought_count}/{target_count})**\n"
+                    f"⎉╎الـسـعـر ⩥ **{price} روبـل**\n"
+                    f"⎉╎الـعـمـلات ⩥ **{coins}**\n"
+                    f"⎉╎الـمـتـابـعـيـن ⩥ **{followers}**\n\n"
+                    f"⎉╎الـكـوكـيـز (لـلـنـسـخ) ⩥\n`{cookies}`"
+                )
+                bot.send_message(chat_id, hit_msg, parse_mode="Markdown")
+                
+        time.sleep(4) 
+
+    if chat_id in ACTIVE_TT_SNIPERS:
+        del ACTIVE_TT_SNIPERS[chat_id]
+        
+    end_msg = (
+        f"**🛑┊انـتـهـت عـمـلـيـة الـشـراء - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+        f"⎉╎تـم شـراء ⩥ **({bought_count})** حـسـابـات."
+    )
+    bot.send_message(chat_id, end_msg, parse_mode="Markdown")
+
+# ==========================================
+# ✦ محرك رمي العملات (Gifting Thread) ✦
+# ==========================================
+def tt_throw_coins_task(bot, chat_id, target_user, room_id):
+    bot.send_message(chat_id, f"**🚀┊بـدأ هـجـوم الـعـمـلات عـلـى الـبـث - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎الـهـدف ⩥ **{target_user}**\n⎉╎جـاري دخـول الحـسـابـات وبـدء الـدعـم...", parse_mode="Markdown")
+    
+    tt_cursor.execute("SELECT item_id, cookies, coins FROM tt_accounts")
+    accounts = tt_cursor.fetchall()
+    
+    total_spent_global = 0
+    
+    for acc in accounts:
+        acc_id, cookies_str, db_coins = acc[0], acc[1], acc[2]
+        cookies_dict = parse_cookies_to_dict(cookies_str)
+        
+        if not cookies_dict or db_coins < 20:
+            continue
+            
+        current_coins = db_coins
+        
+        while current_coins >= 20:
+            if current_coins >= 100:
+                success = tt_send_gift(room_id, GIFT_100_COINS, cookies_dict)
+                cost = 100
+            else:
+                success = tt_send_gift(room_id, GIFT_20_COINS, cookies_dict)
+                cost = 20
+                
+            if success:
+                current_coins -= cost
+                total_spent_global += cost
+                time.sleep(1) 
+            else:
+                break 
+                
+        # حفظ الرصيد الجديد
+        tt_cursor.execute("UPDATE tt_accounts SET coins=? WHERE item_id=?", (current_coins, acc_id))
+        tt_conn.commit()
+
+    if chat_id in ACTIVE_TT_GIFTERS:
+        del ACTIVE_TT_GIFTERS[chat_id]
+        
+    report = (
+        f"**✅┊تـم الإنـتـهـاء مـن دعـم الـبـث - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+        f"⎉╎الـهـدف ⩥ **{target_user}**\n"
+        f"⎉╎إجـمـالـي الـعـمـلات الـمـرسـلـة ⩥ **{total_spent_global} عـمـلـة 🪙**\n"
+        f"⎉╎تـم تـحـديـث الأرصـدة فـي قـاعـدة الـبـيـانـات."
+    )
+    bot.send_message(chat_id, report, parse_mode="Markdown")
+
+# ==========================================
+# ✦ دوال الاستجابة (Callback Handlers) ✦
+# ==========================================
+def register_tiktok_handlers(bot):
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("tt_"))
+    def tt_callbacks(call):
+        chat_id = call.message.chat.id
+        
+        if call.data == "tt_auto_main":
+            msg = "**🛂┊قـائـمـة تـيـك تـوك LZT - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎يـرجـى اخـتـيـار الإجـراء الـمـطـلـوب مـن الأسـفـل ⩥"
+            bot.edit_message_text(msg, chat_id, call.message.message_id, reply_markup=tt_main_menu(), parse_mode="Markdown")
+            
+        elif call.data == "tt_add_json":
+            msg = "**🛂┊إضـافـة حـسـاب يـدويـاً (JSON) - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎يـرجـى إرسـال كـود الـ JSON الخـاص بـالـكـوكـيـز ⩥"
+            sent_msg = bot.send_message(chat_id, msg, parse_mode="Markdown")
+            bot.register_next_step_handler(sent_msg, process_add_json, bot)
+
+        elif call.data == "tt_check_accs":
+            bot.send_message(chat_id, "**🔄┊جـاري فـحـص الحـسـابـات وتـحـديـث الأرصـدة...**", parse_mode="Markdown")
+            
+            tt_cursor.execute("SELECT id, item_id, cookies FROM tt_accounts")
+            accounts = tt_cursor.fetchall()
+            
+            if not accounts:
+                bot.send_message(chat_id, "⚠️┊لا يـوجـد حـسـابـات فـي قـاعـدة الـبـيـانـات.")
+                return
+                
+            total_global_coins = 0
+            report_msg = "**🛂┊تـقـريـر الـفـحـص الـشـامـل - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+            
+            for acc in accounts:
+                db_id, item_id, cookies_str = acc[0], acc[1], acc[2]
+                cookies_dict = parse_cookies_to_dict(cookies_str)
+                
+                if cookies_dict:
+                    info = tt_get_account_info(cookies_dict)
+                    if info["success"]:
+                        coins = info["coins"]
+                        total_global_coins += coins
+                        tt_cursor.execute("UPDATE tt_accounts SET coins=?, followers=? WHERE id=?", (coins, info["followers"], db_id))
+                        report_msg += f"⎉╎حـسـاب `{item_id}` ⩥ **{coins}** عـمـلـة\n"
+                    else:
+                        report_msg += f"⎉╎حـسـاب `{item_id}` ⩥ ❌ مـحـظـور أو الكـوكـيـز مـنـتـهـي\n"
+            
+            tt_conn.commit()
+            report_msg += f"\n**🪙┊إجـمـالـي الـعـمـلات المـتـوفـرة ⩥ {total_global_coins} عـمـلـة**"
+            bot.send_message(chat_id, report_msg, parse_mode="Markdown")
+
+        elif call.data == "tt_throw_coins":
+            if chat_id in ACTIVE_TT_GIFTERS:
+                bot.answer_callback_query(call.id, "⚠️┊هـنـاك عـمـلـيـة دعـم نـشـطـة بـالـفـعـل!", show_alert=True)
+                return
+                
+            msg = "**💸┊رمـي الـعـمـلات عـلـى الـبـث - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎يـرجـى إرسـال يـوزر الشـخـص الـذي يـبـث الآن ⩥"
+            sent_msg = bot.send_message(chat_id, msg, parse_mode="Markdown")
+            bot.register_next_step_handler(sent_msg, process_target_live, bot)
+            
+        elif call.data == "tt_view_accs":
+            tt_cursor.execute("SELECT item_id, coins, cookies FROM tt_accounts")
+            accounts = tt_cursor.fetchall()
+            if not accounts:
+                bot.answer_callback_query(call.id, "⚠️┊قـاعـدة الـبـيـانـات فـارغـة!", show_alert=True)
+                return
+            info_msg = f"**🛂┊عـرض الحـسـابات - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎تـم الـعـثـور عـلـى **{len(accounts)}** حـسـاب"
+            bot.send_message(chat_id, info_msg, parse_mode="Markdown")
+            for acc in accounts:
+                bot.send_message(chat_id, f"**⎉╎رقـم الحـسـاب ⩥ {acc[0]}**\n**⎉╎عـدد الـعـمـلات ⩥ {acc[1]}**\n\n⎉╎الـكـوكـيـز ⩥\n`{acc[2]}`", parse_mode="Markdown")
+                time.sleep(0.5)
+
+        elif call.data == "tt_buy_menu":
+            bot.edit_message_text("**🛒┊قـائـمـة الـشـراء الـتـلـقـائـي - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**", chat_id, call.message.message_id, reply_markup=tt_buy_keyboard(chat_id), parse_mode="Markdown")
+
+        elif call.data == "tt_stop_sniper":
+            if chat_id in ACTIVE_TT_SNIPERS:
+                ACTIVE_TT_SNIPERS[chat_id]["stop_event"].set()
+                bot.answer_callback_query(call.id, "🛑┊جـاري إيـقـاف الـمـراقـبـة...", show_alert=True)
+                bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=tt_buy_keyboard(chat_id))
+
+        elif call.data == "tt_buy_fast":
+            if chat_id in ACTIVE_TT_SNIPERS:
+                bot.answer_callback_query(call.id, "⚠️┊هـنـاك عـمـلـيـة صـيـد نـشـطـة بـالـفـعـل!", show_alert=True)
+                return
+            msg = (
+                f"**🛒┊إعـدادات الـشـراء الـسـريـع - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+                f"⎉╎ارسـل عـدد الحـسـابات الـمـطـلـوب شـرائـهـا ⩥"
+            )
+            sent_msg = bot.send_message(chat_id, msg, parse_mode="Markdown")
+            bot.register_next_step_handler(sent_msg, process_fast_buy_count, bot)
+
+        elif call.data == "tt_buy_custom":
+            if chat_id in ACTIVE_TT_SNIPERS:
+                bot.answer_callback_query(call.id, "⚠️┊هـنـاك عـمـلـيـة صـيـد نـشـطـة بـالـفـعـل!", show_alert=True)
+                return
+            msg = (
+                f"**🛒┊إعـدادات الـشـراء الـمـخـصـص - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+                f"⎉╎ارسـل الـسـعـر بـالـروبـل الـروسـي\n"
+                f"⎉╎مـثـال ⩥ `0 30` (لـلـبـحـث مـن 0 إلـى 30)\n"
+                f"⎉╎او `30` فـقـط (لـلـحـد الأقـصـى 30) ⩥"
+            )
+            sent_msg = bot.send_message(chat_id, msg, parse_mode="Markdown")
+            bot.register_next_step_handler(sent_msg, process_custom_price, bot)
+
+    # ----------------- مسارات (Steps) -----------------
+    def process_add_json(message, bot):
+        json_text = message.text.strip()
+        chat_id = message.chat.id
+        
+        cookies_dict = parse_cookies_to_dict(json_text)
+        if not cookies_dict:
+            bot.send_message(chat_id, "❌┊الـكـود غـيـر صـالـح. يـرجـى الـتـأكـد مـن صـيـغـة الـ JSON.", parse_mode="Markdown")
+            return
+            
+        bot.send_message(chat_id, "⏳┊جـاري تـسـجـيـل الـدخـول وجـلـب بـيـانـات الحـسـاب...")
+        
+        info = tt_get_account_info(cookies_dict)
+        
+        import random
+        fake_item_id = f"MANUAL_{random.randint(10000, 99999)}"
+        
+        coins = info.get("coins", 0) if info.get("success") else 0
+        followers = info.get("followers", 0) if info.get("success") else 0
+        
+        tt_cursor.execute('''
+            INSERT INTO tt_accounts (item_id, price, coins, followers, json_data, cookies)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (fake_item_id, 0.0, coins, followers, "Added_Manually", json_text))
+        tt_conn.commit()
+        
+        success_msg = (
+            f"**✅┊تـم إضـافـة الحـسـاب لـلـقـاعـدة بـنـجـاح - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+            f"⎉╎الـمـتـابـعـيـن ⩥ **{followers}**\n"
+            f"⎉╎الـعـمـلات ⩥ **{coins}** 🪙\n"
+        )
+        if not info.get("success"):
+            success_msg += "\n⚠️┊مـلاحـظـة: لـم يـتـمـكـن الـبـوت مـن قـراءة الأرقـام بـسـبـب حـمـايـة تـيـك تـوك، ولـكـن تـم حـفـظ الحـسـاب."
+            
+        bot.send_message(chat_id, success_msg, parse_mode="Markdown")
+
+    def process_target_live(message, bot):
+        username = message.text.strip().replace("@", "")
+        chat_id = message.chat.id
+        
+        bot.send_message(chat_id, "⏳┊جـاري اسـتـخـراج روم الـبـث (Room ID)...")
+        
+        room_id = tt_get_live_room_id(username)
+        if not room_id:
+            bot.send_message(chat_id, "❌┊عـذراً، إمـا أن الـيـوزر غـيـر صـحـيـح، أو أن الـشـخـص لا يـبـث حـالـيـاً.", parse_mode="Markdown")
+            return
+            
+        ACTIVE_TT_GIFTERS[chat_id] = True
+        
+        t = threading.Thread(target=tt_throw_coins_task, args=(bot, chat_id, username, room_id))
+        t.start()
+
+    def process_fast_buy_count(message, bot):
+        if not message.text.isdigit():
+            bot.send_message(message.chat.id, "**❌┊عـذراً، يـجـب إرسـال أرقـام فـقـط!**", parse_mode="Markdown")
+            return
+            
+        count = int(message.text)
+        chat_id = message.chat.id
+        
+        stop_event = threading.Event()
+        ACTIVE_TT_SNIPERS[chat_id] = {"stop_event": stop_event, "type": "fast"}
+        
+        t = threading.Thread(target=tt_sniper_task, args=(bot, chat_id, count, 0, 8, 100, None, "fast"))
+        t.start()
+        
+        bot.send_message(chat_id, "**✅┊تـم تـفـعـيـل الـمـراقـبـة لـلـشـراء الـسـريـع بـنـجـاح.**", parse_mode="Markdown")
+
+    def process_custom_price(message, bot):
+        text = message.text.strip().split()
+        pmin, pmax = None, None
+        
+        if len(text) == 1 and text[0].isdigit():
+            pmax = int(text[0])
+        elif len(text) >= 2 and text[0].isdigit() and text[1].isdigit():
+            nums = sorted([int(text[0]), int(text[1])])
+            pmin, pmax = nums[0], nums[1]
+        else:
+            bot.send_message(message.chat.id, "**❌┊إدخـال خـاطـئ، تـم الإلـغـاء.**", parse_mode="Markdown")
+            return
+            
+        tt_user_states[message.chat.id] = {"pmin": pmin, "pmax": pmax}
+        
+        msg = (
+            f"**🛒┊إعـدادات الـشـراء الـمـخـصـص - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+            f"⎉╎ارسـل عـدد الـعـمـلات\n"
+            f"⎉╎مـثـال ⩥ `100 1000` (مـن 100 إلـى 1000)\n"
+            f"⎉╎او `1000` فـقـط (لـلـحـد الأقـصـى 1000) ⩥"
+        )
+        sent_msg = bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+        bot.register_next_step_handler(sent_msg, process_custom_coins, bot)
+
+    def process_custom_coins(message, bot):
+        text = message.text.strip().split()
+        cmin, cmax = None, None
+        
+        if len(text) == 1 and text[0].isdigit():
+            cmax = int(text[0])
+        elif len(text) >= 2 and text[0].isdigit() and text[1].isdigit():
+            nums = sorted([int(text[0]), int(text[1])])
+            cmin, cmax = nums[0], nums[1]
+        else:
+            bot.send_message(message.chat.id, "**❌┊إدخـال خـاطـئ، تـم الإلـغـاء.**", parse_mode="Markdown")
+            return
+            
+        tt_user_states[message.chat.id].update({"cmin": cmin, "cmax": cmax})
+        
+        msg = (
+            f"**🛒┊إعـدادات الـشـراء الـمـخـصـص - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
+            f"⎉╎وأخـيـراً.. ارسـل عـدد الحـسـابات الـمـطـلـوب شـرائـهـا ⩥"
+        )
+        sent_msg = bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+        bot.register_next_step_handler(sent_msg, process_custom_count, bot)
+
+    def process_custom_count(message, bot):
+        if not message.text.isdigit():
+            bot.send_message(message.chat.id, "**❌┊عـذراً، يـجـب إرسـال أرقـام فـقـط!**", parse_mode="Markdown")
+            return
+            
+        count = int(message.text)
+        chat_id = message.chat.id
+        user_data = tt_user_states.get(chat_id, {})
+        
+        stop_event = threading.Event()
+        ACTIVE_TT_SNIPERS[chat_id] = {"stop_event": stop_event, "type": "custom"}
+        
+        t = threading.Thread(target=tt_sniper_task, args=(
+            bot, chat_id, count, 
+            user_data.get("pmin"), user_data.get("pmax"), 
+            user_data.get("cmin"), user_data.get("cmax"), 
+            "custom"
+        ))
+        t.start()
+        
+        bot.send_message(chat_id, "**✅┊تـم تـفـعـيـل الـمـراقـبـة لـلـشـراء الـمـخـصـص بـنـجـاح.**", parse_mode="Markdown")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ✦ تفعيل أوامر التيك توك ✦
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+register_tiktok_handlers(bot)
+	
 
 
 
@@ -1898,6 +2465,7 @@ def home_keyboard(uid):
 
         # 👑 تمت إضافة زر القنص هنا للآدمن فقط
         markup.row(InlineKeyboardButton("🛒 تخصيص الشراء التلقائي (LZT)", callback_data="auto_buy_menu"))
+        markup.row(InlineKeyboardButton("🎵 الشراء التلقائي (تيك توك)", callback_data="tt_auto_main"))
 
     return markup
 
