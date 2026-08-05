@@ -3240,7 +3240,7 @@ def start_message(message):
     if message.from_user.id not in ADMIN_IDS:
         log_to_channel(f"🛂┊ مـسـتـخـدم جـديـد دخـل الـبـوت !\n\n⎉╎ الاسـم: {message.from_user.first_name}\n⎉╎ الآيـدي: `{message.from_user.id}`\n⎉╎ الـيـوزر: @{message.from_user.username or 'لا يوجد'}")
 
-    text = ("??┊ أهـلاً بـك فـي بـوت الإدارة الاحـتـرافـي !\n\n⎉╎ أرْسـل مـلـف TDATA (بـصـيـغـة ZIP).\n⎉╎ أو أرْسـل مـلـف .session مـبـاشـرة.\n⎉╎ أو أرْسـل مـفـتـاح AuthKey (HEX).\n⎉╎ أو أرْسـل نـص Session.\n•❐• الـبـوت يـتـعـرف تـلـقـائـيـاً عـلـى الـنـوع.\n\nتـحـكـم بـحـسـابـاتـك بـالـكـامـل مـن الأسـفـل ⬇️")
+    text = ("🛂┊ أهـلاً بـك فـي بـوت الإدارة الاحـتـرافـي !\n\n⎉╎ أرْسـل مـلـف TDATA (بـصـيـغـة ZIP).\n⎉╎ أو أرْسـل مـلـف .session مـبـاشـرة.\n⎉╎ أو أرْسـل مـفـتـاح AuthKey (HEX).\n⎉╎ أو أرْسـل نـص Session.\n•❐• الـبـوت يـتـعـرف تـلـقـائـيـاً عـلـى الـنـوع.\n\nتـحـكـم بـحـسـابـاتـك بـالـكـامـل مـن الأسـفـل ⬇️")
     bot.reply_to(message, text, reply_markup=home_keyboard(message.from_user.id), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_home")
