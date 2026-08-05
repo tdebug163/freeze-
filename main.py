@@ -3565,6 +3565,121 @@ def accounts_action_keyboard(owner_id, action):
         markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"act:{action}:{acc_id}")) 
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home")) 
     return markup
+   
+  
+ 
+# =========================================================
+# دوال القوائم المفقودة (2FA والإزالة التلقائية)
+# =========================================================
+
+def two_fa_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("• حـذف الـتـحـقـق 🗑️", callback_data="menu_2fa_remove"),
+               InlineKeyboardButton("• تـغـيـيـر الـتـحـقـق 🔄", callback_data="menu_2fa_change"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    return markup
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_2fa_manage")
+def menu_2fa_manage(call):
+    if not is_allowed(call.from_user.id): return
+    bot.edit_message_text("🛂┊ إدارة الـتـحـقـق بـخـطـوتـيـن:\n\n⎉╎ اخـتـر الـعـمـلـيـة:", call.message.chat.id, call.message.message_id, reply_markup=two_fa_keyboard(), parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "autoterm_manage")
+def autoterm_manage_menu(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    accounts = get_all_accounts(call.from_user.id)
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute("SELECT auto_term_enabled FROM sessions WHERE owner_id=?", (call.from_user.id,))
+    rows = c.fetchall()
+    all_enabled = all(r[0] == 1 for r in rows) if rows else False
+
+    markup.row(InlineKeyboardButton("• تـعـطـيـل الإزالـة لـلـجـمـيـع 🔴" if all_enabled else "• تـفـعـيـل الإزالـة لـلـجـمـيـع 🟢", callback_data="autoterm:toggle:all"))
+    markup.row(InlineKeyboardButton("• ضـبـط وقـت الإزالـة 🕒", callback_data="autoterm_set_time"))
+
+    for acc_id, phone, name, uid, _ in accounts:
+        c.execute("SELECT auto_term_enabled, auto_term_interval FROM sessions WHERE id=?", (acc_id,))
+        acc_data = c.fetchone()
+        if acc_data:
+            markup.row(InlineKeyboardButton(f"{'🟢' if acc_data[0] == 1 else '🔴'} {name} | كل {acc_data[1]} سـاعـة", callback_data=f"autoterm:toggle:{acc_id}"))
+    conn.close()
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    text = "🛂┊ **إدارة إزالـة الأجـهـزة الـتـلـقـائـيـة:**\n\n⎉╎ يـقـوم الـبـوت بـفـحـص وإنـهـاء جـلـسـات الـحـسـابـات بـشـكـل دوري."
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("autoterm:toggle:"))
+def handle_autoterm_toggle(call):
+    if not is_allowed(call.from_user.id): return
+    target = call.data.split(":")[-1]
+    conn = get_db_conn()
+    c = conn.cursor()
+    if target == "all":
+        c.execute("SELECT auto_term_enabled FROM sessions WHERE owner_id=?", (call.from_user.id,))
+        rows = c.fetchall()
+        new_state = 0 if all(r[0] == 1 for r in rows) else 1
+        c.execute("UPDATE sessions SET auto_term_enabled=? WHERE owner_id=?", (new_state, call.from_user.id))
+    else:
+        c.execute("SELECT auto_term_enabled FROM sessions WHERE id=?", (target,))
+        new_state = 0 if c.fetchone()[0] == 1 else 1
+        c.execute("UPDATE sessions SET auto_term_enabled=? WHERE id=?", (new_state, target))
+    conn.commit()
+    conn.close()
+    autoterm_manage_menu(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "autoterm_set_time")
+def autoterm_set_time_start(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="autoterm:time:all"))
+    for acc_id, phone, name, uid, _ in get_all_accounts(call.from_user.id):
+        markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"autoterm:time:{acc_id}"))
+    markup.row(InlineKeyboardButton("🔙 إلـغـاء", callback_data="autoterm_manage"))
+    bot.edit_message_text("🛂┊ ضـبـط وقـت الإزالـة:\n\n⎉╎ اخـتـر الـحـسـاب:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("autoterm:time:"))
+def ask_autoterm_hours(call):
+    if not is_allowed(call.from_user.id): return
+    USER_STATES[call.from_user.id] = {"action": "set_autoterm_hours", "target": call.data.split(":")[-1]}
+    msg = bot.send_message(call.message.chat.id, "•❐• أرسـل عـدد الـسـاعـات (مـثـال: 1 لـساعة، 24 لـيوم):")
+    bot.register_next_step_handler(msg, process_autoterm_hours)
+
+def process_autoterm_hours(message):
+    uid = message.from_user.id
+    if uid not in USER_STATES or USER_STATES[uid]["action"] != "set_autoterm_hours": return
+    target = USER_STATES.pop(uid)["target"]
+    if not message.text.strip().isdigit() or int(message.text.strip()) < 1: return bot.send_message(message.chat.id, "❌ رقـم غـيـر صـالـح.", reply_markup=home_keyboard(uid))
+    hours = int(message.text.strip())
+    conn = get_db_conn()
+    c = conn.cursor()
+    if target == "all":
+        c.execute("UPDATE sessions SET auto_term_interval=?, auto_term_enabled=1 WHERE owner_id=?", (hours, uid))
+    else:
+        c.execute("UPDATE sessions SET auto_term_interval=?, auto_term_enabled=1 WHERE id=?", (hours, target))
+    conn.commit()
+    conn.close()
+    bot.send_message(message.chat.id, f"✅ تـم ضـبـط الإزالـة عـلـى: كـل {hours} سـاعـة.", parse_mode="Markdown", reply_markup=home_keyboard(uid))
+
+# =========================================================
+# دوال استدعاء الفحص وجلب الأكواد
+# =========================================================
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_active")
+def check_active_accounts(call):
+    if not is_allowed(call.from_user.id): return
+    bot.answer_callback_query(call.id, "⏳ جاري فحص الحسابات بسرعة 50 اتصال...")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري فـحـص الـحـسـابـات الـشـغـالـة...", parse_mode="Markdown")
+    run_async(check_active_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
+
+@bot.callback_query_handler(func=lambda call: call.data == "req_code")
+def scan_all_codes(call):
+    if not is_allowed(call.from_user.id): return
+    bot.answer_callback_query(call.id, "⏳ جاري جلب الأكواد (الكل بنفس الوقت)...")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري جـلـب الأكـواد مـن الـحـسـابـات...", parse_mode="Markdown")
+    run_async(fetch_all_codes_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
+
+
+
 
 
 # =========================================================
