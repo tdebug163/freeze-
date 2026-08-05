@@ -3556,11 +3556,19 @@ def show_sessions_by_type(call):
 
 
 
-
+# الدالة المفقودة التي تصنع أزرار الحسابات
+def accounts_action_keyboard(owner_id, action): 
+    accounts = get_all_accounts(owner_id) 
+    markup = InlineKeyboardMarkup() 
+    markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data=f"act:{action}:all")) 
+    for acc_id, phone, name, uid, _ in accounts: 
+        markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"act:{action}:{acc_id}")) 
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home")) 
+    return markup
 
 
 # =========================================================
-# 1. القوائم الوسيطة (المنظفة من الـ 2FA)
+# 1. القوائم الوسيطة (المنظفة)
 # =========================================================
 @bot.callback_query_handler(func=lambda call: call.data in ["menu_terminate", "menu_clean", "menu_logout", "menu_remove"])
 def action_menus(call):
@@ -3573,6 +3581,9 @@ def action_menus(call):
         "remove": "🛂┊ إزالـة مـن الـبـوت (بـدون خـروج):\n⎉╎ اخـتـر حـسـابـاً لـحـذفـه بـرمـجـيـاً:"
     }
     bot.edit_message_text(titles[action], call.message.chat.id, call.message.message_id, reply_markup=accounts_action_keyboard(call.from_user.id, action), parse_mode="Markdown")
+
+
+
 
 
 # =========================================================
