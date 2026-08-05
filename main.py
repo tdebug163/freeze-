@@ -2497,8 +2497,6 @@ def home_keyboard(uid):
 
 
 
-
-
 # ==========================================
 # 0. تحديث قاعدة البيانات تلقائياً 
 # ==========================================
@@ -2527,7 +2525,7 @@ def pass_reset_main_menu(call):
     markup.row(InlineKeyboardButton("• فـحـص حـالـة الـريـسـت والـحـسـابـات 🔍", callback_data="pass_reset:check_all"))
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
     
-    text = "🛂┊ **إدارة إعـادة تـعـيـيـن كـلـمـات الـمـرور:**\n\n⎉╎ هـذا الـقـسـم مـخـصـص لـعـمـل (ريـسـت 7 أيـام) لـلـحـسـابـات ومـراقـبـتـهـا وطـرد أي جـلـسـة تـحـاول الـدخـول بـشـكـل فـوري. ❤️‍🔥"
+    text = "🛂┊ **إدارة إعـادة تـعـيـيـن كـلـمـات الـمـرور:**\n\n⎉╎ هـذا الـقـسـم مـخـصـص لـعـمـل (ريـسـت 7 أيـام) لـلـحـسـابـات ومـراقـبـتـهـا بـذكـاء كـل 20 دقـيـقـة وطـرد الـدخـلاء بـدون الـتـأثـيـر عـلـى سـرعـة الـبـوت. 🚀"
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
 def pass_reset_keyboard(owner_id):
@@ -2542,12 +2540,12 @@ def pass_reset_keyboard(owner_id):
 @bot.callback_query_handler(func=lambda call: call.data == "pass_reset:start_menu")
 def pass_reset_start_menu(call):
     if not is_allowed(call.from_user.id): return
-    bot.edit_message_text("🛂┊ إخـتـر الـحـسـاب لـبـدء الـريـسـت:\n\n⎉╎ سـيـتـم وضـع الـحـسـاب فـي وضـع الـقـفـل وتـنـفـيـذ الـريـسـت.",
+    bot.edit_message_text("🛂┊ إخـتـر الـحـسـاب لـبـدء الـريـسـت:\n\n⎉╎ سـيـتـم طـلـب الـريـسـت، مـسـح مـحـادثـة تـلـيـجـرام، وتـفـعـيـل الـقـفـل الـذكـي.",
                           call.message.chat.id, call.message.message_id, 
                           reply_markup=pass_reset_keyboard(call.from_user.id), parse_mode="Markdown")
 
 # ==========================================
-# 2. عملية بدء الريست
+# 2. عملية بدء الريست (مُحسنة بمسح محادثة 777000)
 # ==========================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("do_reset:"))
 def handle_start_reset(call):
@@ -2561,26 +2559,36 @@ async def perform_single_reset(acc_id, phone, pyro_session):
     async with account_semaphore:
         client = Client(f"pr_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
-            await asyncio.wait_for(client.connect(), timeout=10)
+            await asyncio.wait_for(client.connect(), timeout=12)
             password_info = await client.invoke(functions.account.GetPassword())
             
             if not password_info.has_password:
                 return f"✅ `{phone}` ┊ لا يـوجـد كـلـمـة مـرور (جـاهـز)."
             
+            # ضرب ريست
             await client.invoke(functions.account.ResetPassword())
             
+            # تفعيل وضع القفل الأمني في القاعدة
             conn = get_db_conn()
             c = conn.cursor()
             c.execute("UPDATE sessions SET lockdown_mode=1, reset_retries=0 WHERE id=?", (acc_id,))
             conn.commit()
             conn.close()
             
+            # طرد باقي الجلسات لضمان عدم وجود أحد حالياً
             try: 
                 await client.invoke(functions.auth.ResetAuthorizations())
             except: 
                 pass
+                
+            # [التحديث الجديد]: مسح محادثة 777000 بالكامل حتى لا يرى المخترق الكود
+            try:
+                peer = await client.resolve_peer(777000)
+                await client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
+            except Exception:
+                pass
             
-            return f"✅ `{phone}` ┊ تـم بـدء الـريـسـت وتـفـعـيـل الـقـفـل الـفـوري."
+            return f"✅ `{phone}` ┊ تـم طـلـب الـريـسـت ومـسـح شـات تـلـيـجـرام."
         except Exception as e:
             if "PASSWORD_RESET_NEW_CLIENTS" in str(e):
                 return f"❌ `{phone}` ┊ انـتـظـر 24 سـاعـة قـبـل الـريـسـت."
@@ -2623,8 +2631,7 @@ async def check_single_reset_status(acc_id, phone, pyro_session, owner_id):
         
         client = Client(f"chk_rs_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
-            await asyncio.wait_for(client.connect(), timeout=10)
-            await client.get_me()
+            await asyncio.wait_for(client.connect(), timeout=12)
             info = await client.invoke(functions.account.GetPassword())
             
             conn = get_db_conn()
@@ -2664,7 +2671,7 @@ async def check_single_reset_status(acc_id, phone, pyro_session, owner_id):
                     conn.close()
                     return f"`{phone}` ┊ نـشـط ┊ انـتـهـت مـحـاولات الـريـسـت ❌\n", 1
 
-        except Exception as e:
+        except Exception:
             return f"⚠️ `{phone}` ┊ خـطـأ فـي الـشـبـكـة أثـنـاء الـفـحـص\n", 1
         finally:
             if client.is_connected: await client.disconnect()
@@ -2684,21 +2691,9 @@ async def check_all_resets_async(owner_id, chat_id, msg_id):
     bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
 
 # ==========================================
-# 4. المراقب الأمني الحي (Real-Time Lockdown Daemon) 🔥
+# 4. المراقب الأمني الذكي (Lightweight Stealth Monitor) 🚀
 # ==========================================
-active_lockdown_clients = {}
-
-# هذا الهاندلر يصطاد أي رسالة من تيليجرام (777000) فوراً
-async def real_time_kick_handler(cli, message):
-    try:
-        # بمجرد استلام رسالة من 777000 يتم طرد كل الجلسات الأخرى فوراً لمنع سحب الحساب
-        await cli.invoke(functions.auth.ResetAuthorizations())
-    except Exception:
-        pass
-
 async def lockdown_monitor_daemon():
-    last_full_sweep = time.time()
-    
     while True:
         try:
             conn = get_db_conn()
@@ -2707,57 +2702,43 @@ async def lockdown_monitor_daemon():
             lockdown_accounts = c.fetchall()
             conn.close()
 
-            current_locked_ids = {acc[0] for acc in lockdown_accounts}
-
-            # 1. إيقاف وإزالة الحسابات التي انتهى عنها القفل
-            to_remove = []
-            for acc_id in active_lockdown_clients:
-                if acc_id not in current_locked_ids:
-                    try: await active_lockdown_clients[acc_id].stop()
-                    except: pass
-                    to_remove.append(acc_id)
-            for acc_id in to_remove:
-                del active_lockdown_clients[acc_id]
-
-            # 2. تشغيل الحسابات الجديدة وربطها بالمراقب الفوري (Real-Time Listener)
+            # يمر على الحسابات المقفلة بسرعة
             for acc_id, pyro_session in lockdown_accounts:
-                if acc_id not in active_lockdown_clients:
-                    client = Client(f"rt_lock_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
-                    # ربط الهاندلر لمراقبة حساب 777000 بشكل لحظي
-                    client.add_handler(MessageHandler(real_time_kick_handler, filters.chat(777000)))
+                client = Client(f"bg_lock_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+                try:
+                    await asyncio.wait_for(client.connect(), timeout=10)
                     
-                    try:
-                        await client.start()
-                        active_lockdown_clients[acc_id] = client
-                    except Exception:
-                        pass # إذا الجلسة ميتة نتجاهلها وسيتم حذفها وقت الفحص
+                    # الفكرة الأسطورية: جلب عدد الجلسات، إذا أكثر من 1، يعني في مخترق دخل!
+                    auths = await client.invoke(functions.account.GetAuthorizations())
+                    if len(auths.authorizations) > 1:
+                        # نطرد الدخيل
+                        await client.invoke(functions.auth.ResetAuthorizations())
+                        
+                except Exception:
+                    pass
+                finally:
+                    # نقفل الاتصال فوراً لنعطي البوت مساحته
+                    if client.is_connected:
+                        await client.disconnect()
+                
+                # استراحة نصف ثانية بين حساب وحساب عشان المعالج ما يحس بشيء
+                await asyncio.sleep(0.5)
 
-            # 3. الصيانة الاحتياطية (كل 20 دقيقة) كضمان إضافي في حال لم يصل الإشعار
-            if time.time() - last_full_sweep >= 1200:
-                for acc_id, cli in active_lockdown_clients.items():
-                    try:
-                        await cli.invoke(functions.auth.ResetAuthorizations())
-                    except Exception:
-                        pass
-                last_full_sweep = time.time()
-
-            # التحقق من القاعدة وتحديث الجلسات كل 30 ثانية (لا يستهلك موارد)
-            await asyncio.sleep(30)
+            # ينام المراقب لمدة 20 دقيقة (1200 ثانية)
+            await asyncio.sleep(1200) 
             
         except Exception:
-            await asyncio.sleep(30)
+            await asyncio.sleep(60)
 
 # ==========================================
-# 5. تشغيل المراقب في مسار خلفي معزول (Thread) لمنع توقف البوت
+# 5. تشغيل المراقب في مسار خلفي معزول (Thread)
 # ==========================================
 def start_lockdown_thread():
     def run_daemon():
-        # إنشاء Event Loop منفصل تماماً لهذا المسار (Thread)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(lockdown_monitor_daemon())
         
-    # تشغيل في الخلفية (daemon=True يعني أنه سيُغلق تلقائياً إذا أغلقت البوت)
     t = threading.Thread(target=run_daemon, daemon=True)
     t.start()
 
