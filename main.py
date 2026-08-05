@@ -2921,25 +2921,120 @@ async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
 
 
 
+# =========================================================
+# 🔐 إدارة التحقق بخطوتين (سريع - 50 عامل متزامن)
+# =========================================================
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("act:2fa_remove:") or call.data.startswith("act:2fa_change:"))
+def handle_2fa_action(call):
+    if not is_allowed(call.from_user.id): return
+    
+    action = call.data.split(":")[1] # إما 2fa_remove أو 2fa_change
+    target_id = call.data.split(":")[2] # إما all أو أيدي الحساب
+    
+    USER_STATES[call.from_user.id] = {
+        "action": action,
+        "target": target_id,
+        "step": "ask_current_password"
+    }
+    
+    msg = "•❐• أرسـل كـلـمـة الـمـرور **الـحـالـيـة** لـلـحـسـاب:\n\n⎉╎ إذا لـم يـكـن هـنـاك رمـز، أرسـل كـلـمـة `لا يوجد`"
+    prompt = bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.register_next_step_handler(prompt, process_current_password)
+
+def process_current_password(message):
+    uid = message.from_user.id
+    if uid not in USER_STATES or USER_STATES[uid].get("step") != "ask_current_password": return
+    
+    state = USER_STATES[uid]
+    current_pass = message.text.strip()
+    
+    if current_pass == "لا يوجد":
+        current_pass = None
+        
+    state["current_password"] = current_pass
+    
+    if state["action"] == "2fa_remove":
+        status_msg = bot.send_message(message.chat.id, "⏳ جـاري حـذف كـلـمـة الـمـرور بـسـرعـة 50 اتـصـال...")
+        run_async(execute_2fa_async(uid, status_msg.chat.id, status_msg.message_id, state["target"], "remove", current_pass))
+        del USER_STATES[uid]
+        
+    elif state["action"] == "2fa_change":
+        state["step"] = "ask_new_password"
+        prompt = bot.send_message(message.chat.id, "•❐• مـمـتـاز، الآن أرسـل كـلـمـة الـمـرور **الـجـديـدة**:")
+        bot.register_next_step_handler(prompt, process_new_password)
+
+def process_new_password(message):
+    uid = message.from_user.id
+    if uid not in USER_STATES or USER_STATES[uid].get("step") != "ask_new_password": return
+    
+    state = USER_STATES[uid]
+    new_pass = message.text.strip()
+    current_pass = state["current_password"]
+    
+    status_msg = bot.send_message(message.chat.id, "⏳ جـاري تـعـيـيـن كـلـمـة الـمـرور بـسـرعـة 50 اتـصـال...")
+    run_async(execute_2fa_async(uid, status_msg.chat.id, status_msg.message_id, state["target"], "change", current_pass, new_pass))
+    del USER_STATES[uid]
 
 
+# ---------------------------------------------------------
+# المهام المتزامنة (50 حساب بنفس الوقت)
+# ---------------------------------------------------------
 
+async def process_single_2fa(acc_id, phone, pyro_session, action, current_pass, new_pass=None):
+    # استخدام حسابات 50 عامل بنفس الوقت مثل بقية الدوال
+    async with account_semaphore: 
+        client = Client(f"2fa_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=10)
+            
+            if action == "remove":
+                await client.remove_cloud_password(password=current_pass or "")
+                result = f"✅ {phone} | تـم الـحـذف بـنـجـاح\n"
+                
+            elif action == "change":
+                if current_pass:
+                    await client.change_cloud_password(current_password=current_pass, new_password=new_pass)
+                else:
+                    await client.enable_cloud_password(password=new_pass)
+                result = f"✅ {phone} | تـم تـعـيـيـن الـمـرور بـنـجـاح\n"
+                
+            return result
+            
+        except PasswordHashInvalid:
+            return f"❌ {phone} | الـبـاسـورد الـحـالـي خـطـأ\n"
+        except (AuthKeyUnregistered, SessionRevoked, UserDeactivated):
+            return f"⚠️ {phone} | الـجـلـسـة مـيـتـة\n"
+        except asyncio.TimeoutError:
+            return f"⚠️ {phone} | (انتهى وقت الاتصال - معلق)\n"
+        except Exception as e:
+            return f"⚠️ {phone} | خـطـأ بـالـشـبـكـة\n"
+        finally:
+            if client.is_connected:
+                await client.disconnect()
 
+async def execute_2fa_async(owner_id, chat_id, msg_id, target, action, current_pass, new_pass=None):
+    if target == "all":
+        accounts = get_all_accounts(owner_id)
+    else:
+        acc = get_account(target)
+        accounts = [(acc[0], acc[2], acc[4], acc[3], acc[5])] if acc else []
+        
+    if not accounts:
+        return bot.edit_message_text("❌ لا تـوجـد حـسـابـات مـضـافـة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
 
-def accounts_action_keyboard(owner_id, action):
-    accounts = get_all_accounts(owner_id)
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data=f"act:{action}:all"))
-    for acc_id, phone, name, uid, _ in accounts:
-        markup.row(InlineKeyboardButton(f"{name} | {phone}", callback_data=f"act:{action}:{acc_id}"))
-    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
-    return markup
-
-def two_fa_keyboard():
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("• حـذف الـتـحـقـق 🗑️", callback_data="menu_2fa_remove"), InlineKeyboardButton("• تـغـيـيـر الـتـحـقـق 🔄", callback_data="menu_2fa_change"))
-    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home"))
-    return markup
+    # بناء قائمة المهام (50 مهمة مع بعض)
+    tasks = [
+        process_single_2fa(acc_id, phone, pyro_session, action, current_pass, new_pass)
+        for acc_id, phone, _, _, pyro_session in accounts
+    ]
+    
+    # التنفيذ المتزامن الشامل باستخدام gather
+    results = await asyncio.gather(*tasks)
+    
+    final_text = f"🛂┊ نـتـيـجـة إدارة الـتـحـقـق بـخـطـوتـيـن:\n\n" + "".join(results)
+    
+    bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
 
 # =========================================================
 # ✉️ الأوامر
