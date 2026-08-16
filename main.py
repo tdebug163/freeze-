@@ -3386,6 +3386,11 @@ def show_sessions_by_type(call):
 # 🔠 منظومة إدارة وتحرير اليوزرات السريعة
 # ==========================================
 
+# دالة مساعدة لجمع البيانات بطريقة آمنة لتجنب خطأ الـ Event Loop في الـ Threads
+async def gather_account_info_safe(accounts):
+    tasks = [fetch_account_info_fast(acc[0], acc[1], acc[2], acc[3], acc[4]) for acc in accounts]
+    return await asyncio.gather(*tasks)
+
 @bot.callback_query_handler(func=lambda call: call.data == "usernames_manage")
 def usernames_manage_menu(call):
     if not is_allowed(call.from_user.id): return
@@ -3404,11 +3409,15 @@ def usernames_manage_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data == "usernames_check")
 def usernames_check_action(call):
     if not is_allowed(call.from_user.id): return
-    bot.edit_message_text("⏳ **جـاري فـحـص يـوزرات الـحـسـابـات بـسـرعـة...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     
     accounts = get_all_accounts(call.from_user.id)
-    tasks = [fetch_account_info_fast(acc[0], acc[1], acc[2], acc[3], acc[4]) for acc in accounts]
-    fetched_data = run_async(asyncio.gather(*tasks))
+    if not accounts:
+        return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة للفحص!", show_alert=True)
+
+    bot.edit_message_text("⏳ **جـاري فـحـص يـوزرات الـحـسـابـات بـسـرعـة...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    
+    # استخدام الدالة الآمنة لجمع البيانات بدون مشاكل المسارات (Threads)
+    fetched_data = run_async(gather_account_info_safe(accounts))
     
     text = "🛂┊ **نـتـيـجـة فـحـص الـيـوزرات:**\n\n"
     for acc_id, phone, name, uid, me in fetched_data:
@@ -3416,7 +3425,7 @@ def usernames_check_action(call):
             user_display = f"@{me.username}"
         else:
             user_display = "----"
-        text += f"⎉╎ {user_display} | `{phone}`\n"
+        text += f"⎉╎ **{user_display}** | `{phone}`\n"
         
     markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="usernames_manage"))
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
@@ -3424,11 +3433,14 @@ def usernames_check_action(call):
 @bot.callback_query_handler(func=lambda call: call.data == "usernames_release_menu")
 def usernames_release_menu(call):
     if not is_allowed(call.from_user.id): return
-    bot.edit_message_text("⏳ **جـاري جـلـب الـحـسـابـات الـتـي تـحـتـوي عـلـى يـوزرات...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     
     accounts = get_all_accounts(call.from_user.id)
-    tasks = [fetch_account_info_fast(acc[0], acc[1], acc[2], acc[3], acc[4]) for acc in accounts]
-    fetched_data = run_async(asyncio.gather(*tasks))
+    if not accounts:
+        return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة!", show_alert=True)
+
+    bot.edit_message_text("⏳ **جـاري جـلـب الـحـسـابـات الـتـي تـحـتـوي عـلـى يـوزرات...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    
+    fetched_data = run_async(gather_account_info_safe(accounts))
     
     markup = InlineKeyboardMarkup()
     has_usernames = False
@@ -3447,9 +3459,9 @@ def usernames_release_menu(call):
     USER_STATES[call.from_user.id] = {"action": "wait_for_username_release"}
     
     if has_usernames:
-        text = "🛂┊ **تـحـريـر الـيـوزرات:**\n\n⎉╎ اخـتـر يـوزراً لـتـحـريـره أو أرسـل الـيـوزر بـالـشـكـل `@user`"
+        text = "🛂┊ **تـحـريـر الـيـوزرات:**\n\n⎉╎ **اخـتـر يـوزراً لـتـحـريـره أو أرسـل الـيـوزر بـالـشـكـل `@user`**"
     else:
-        text = "❌ **لا يـوجـد أي حـسـاب يـحـتـوي عـلـى يـوزر حـالـيـاً.**"
+        text = "🛂┊ **لا يـوجـد أي حـسـاب يـحـتـوي عـلـى يـوزر حـالـيـاً.**"
         
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
@@ -3462,7 +3474,7 @@ def execute_release_username(call):
     bot.edit_message_text("⏳ **جـاري تـحـريـر الـيـوزر(ات)...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     
     async def do_release(acc_id, pyro_session):
-        async with account_semaphore:
+        async with account_semaphore: # يلتزم بـ 50 اتصال بنفس الوقت
             client = Client(f"rel_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
             try:
                 await asyncio.wait_for(client.connect(), timeout=8)
@@ -3484,9 +3496,9 @@ def execute_release_username(call):
         success_count = sum(1 for r in results if r)
         
         msg = (
-            f"**⎉╎ تـمـت تـحـريـر الـيـوزر بـنـجـاح!**\n"
-            f"**⎉╎ الـنـجـاح:** `{success_count}` حـسـاب\n\n"
-            f"**🛂┊ انـتـظـر 5 دقـائـق قـبـل اسـتـخـدام الـيـوزر.**"
+            f"🛂┊ **تـمـت عـمـلـيـة تـحـريـر الـيـوزرات!**\n\n"
+            f"⎉╎ **الـنـجـاح:** `{success_count}` حـسـاب\n"
+            f"**⚠️┊ انـتـظـر 5 دقـائـق قـبـل اسـتـخـدام الـيـوزر.**"
         )
         markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="usernames_manage"))
         bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
@@ -3514,7 +3526,7 @@ def handle_text_username_release(message):
             
     if not target_username: return
     
-    status_msg = bot.reply_to(message, f"🛂 **جـاري الـبـحـث عـن `{target_username}` وتـحـريـره...**", parse_mode="Markdown")
+    status_msg = bot.reply_to(message, f"⏳ **جـاري الـبـحـث عـن `@{(target_username)}` وتـحـريـره...**", parse_mode="Markdown")
     
     async def find_and_release(target):
         accounts = get_all_accounts(uid)
@@ -3546,11 +3558,11 @@ def handle_text_username_release(message):
     
     if success:
         msg = (
-            f"**⎉╎ تـمـت تـحـريـر الـيـوزر `@{(target_username)}` بـنـجـاح!**\n\n"
-            f"**🛂┊ انـتـظـر 5 دقـائـق قـبـل إضـافـتـه لـحـسـابـك.**"
+            f"🛂┊ **تـمـت تـحـريـر الـيـوزر `@{(target_username)}` بـنـجـاح!**\n\n"
+            f"**⚠️┊ انـتـظـر 5 دقـائـق قـبـل إضـافـتـه لـحـسـابـك.**"
         )
     else:
-        msg = f"❌ **لـم يـتـم الـعـثـور عـلـى الـيـوزر `@{(target_username)}` فـي أي حـسـاب تـمـلـكـه.**"
+        msg = f"🛂┊ **لـم يـتـم الـعـثـور عـلـى الـيـوزر `@{(target_username)}` فـي أي حـسـاب تـمـلـكـه.**"
         
     bot.edit_message_text(msg, message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
