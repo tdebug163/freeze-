@@ -3381,15 +3381,38 @@ def show_sessions_by_type(call):
             time.sleep(0.3)
 
 
+import html
+import time
+import asyncio
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram import Client
 
 # ==========================================
-# 🔠 منظومة إدارة وتحرير اليوزرات السريعة
+# 🔠 دوال مساعدة لجلب البيانات بسرعة فائقة وأمان
 # ==========================================
+
+# دالة مساعدة لجلب معلومات الحسابات بسرعة 50 اتصال
+async def fetch_account_info_fast(acc_id, phone, name, uid, pyro_session):
+    async with account_semaphore:
+        client = Client(f"rev_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=8)
+            me = await client.get_me()
+            await client.disconnect()
+            return acc_id, phone, name, uid, me
+        except Exception:
+            if client.is_connected:
+                await client.disconnect()
+            return acc_id, phone, name, uid, None
 
 # دالة مساعدة لجمع البيانات بطريقة آمنة لتجنب خطأ الـ Event Loop في الـ Threads
 async def gather_account_info_safe(accounts):
     tasks = [fetch_account_info_fast(acc[0], acc[1], acc[2], acc[3], acc[4]) for acc in accounts]
     return await asyncio.gather(*tasks)
+
+# ==========================================
+# 🔠 منظومة إدارة وتحرير اليوزرات السريعة
+# ==========================================
 
 @bot.callback_query_handler(func=lambda call: call.data == "usernames_manage")
 def usernames_manage_menu(call):
@@ -3414,21 +3437,54 @@ def usernames_check_action(call):
     if not accounts:
         return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة للفحص!", show_alert=True)
 
-    bot.edit_message_text("⏳ **جـاري فـحـص يـوزرات الـحـسـابـات بـسـرعـة...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.edit_message_text("⏳ <b>جـاري فـحـص يـوزرات الـحـسـابـات بـسـرعـة...</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
     
-    # استخدام الدالة الآمنة لجمع البيانات بدون مشاكل المسارات (Threads)
+    # استخدام الدالة الآمنة لجمع البيانات بـ 50 اتصال بنفس الوقت
     fetched_data = run_async(gather_account_info_safe(accounts))
     
-    text = "🛂┊ **نـتـيـجـة فـحـص الـيـوزرات:**\n\n"
+    # تجهيز نظام تقسيم الرسائل لتفادي خطأ طول الرسالة
+    text_chunks = []
+    current_text = "<b>🛂┊ نـتـيـجـة فـحـص الـيـوزرات:</b>\n\n"
+    
     for acc_id, phone, name, uid, me in fetched_data:
+        # جلب اليوزر (الـ HTML يتجاهل الشرطات السفلية ويعرضها كما هي بدون مشاكل)
         if me and me.username:
-            user_display = f"@{me.username}"
+            user_display = f"@{html.escape(me.username)}"
         else:
             user_display = "----"
-        text += f"⎉╎ **{user_display}** | `{phone}`\n"
+            
+        # تجهيز السطر الخاص بكل حساب
+        line = f"⎉╎ <b>{user_display}</b> | <code>{phone}</code>\n"
+        
+        # إذا اقتربنا من الحد الأقصى لتليجرام (3900 حرف)، نحفظ الرسالة ونبدأ رسالة جديدة
+        if len(current_text) + len(line) > 3900:
+            text_chunks.append(current_text)
+            current_text = "<b>🛂┊ تـكـمـلـة الـيـوزرات:</b>\n\n" + line
+        else:
+            current_text += line
+            
+    # إضافة آخر دفعة إلى القائمة
+    if current_text:
+        text_chunks.append(current_text)
         
     markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="usernames_manage"))
-    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    
+    # إرسال الرسائل بالترتيب
+    for i, chunk in enumerate(text_chunks):
+        is_last_chunk = (i == len(text_chunks) - 1)
+        # نضع الزر فقط في الرسالة الأخيرة
+        current_markup = markup if is_last_chunk else None
+        
+        try:
+            if i == 0:
+                # الرسالة الأولى تعدل رسالة "جاري الفحص..."
+                bot.edit_message_text(chunk, call.message.chat.id, call.message.message_id, reply_markup=current_markup, parse_mode="HTML")
+            else:
+                # الرسائل التكميلية تُرسل كرسائل جديدة
+                bot.send_message(call.message.chat.id, chunk, reply_markup=current_markup, parse_mode="HTML")
+                time.sleep(0.3) # تجنب حظر الـ Spam من تليجرام للإرسال السريع
+        except Exception as e:
+            pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "usernames_release_menu")
 def usernames_release_menu(call):
@@ -3448,6 +3504,7 @@ def usernames_release_menu(call):
     for acc_id, phone, name, uid, me in fetched_data:
         if me and me.username:
             has_usernames = True
+            # النص داخل الأزرار آمن ولا يتأثر بالماركدون أبداً
             markup.row(InlineKeyboardButton(f"@{me.username} | {phone}", callback_data=f"act_release:{acc_id}"))
             
     if has_usernames:
@@ -3505,7 +3562,7 @@ def execute_release_username(call):
 
     run_async(release_all())
 
-# استقبال الـ @ والـ @@ للتحرير عبر النص
+# استقبال الـ @ والـ @@ للتحرير عبر النص (محمي بـ HTML)
 @bot.message_handler(func=lambda m: m.text and (m.text.startswith('@') or m.text.startswith('@@')))
 def handle_text_username_release(message):
     uid = message.from_user.id
@@ -3526,7 +3583,8 @@ def handle_text_username_release(message):
             
     if not target_username: return
     
-    status_msg = bot.reply_to(message, f"⏳ **جـاري الـبـحـث عـن `@{(target_username)}` وتـحـريـره...**", parse_mode="Markdown")
+    # استخدام HTML لحماية الرد من الشرطات السفلية الخاصة باليوزر
+    status_msg = bot.reply_to(message, f"⏳ <b>جـاري الـبـحـث عـن <code>@{html.escape(target_username)}</code> وتـحـريـره...</b>", parse_mode="HTML")
     
     async def find_and_release(target):
         accounts = get_all_accounts(uid)
@@ -3558,13 +3616,13 @@ def handle_text_username_release(message):
     
     if success:
         msg = (
-            f"🛂┊ **تـمـت تـحـريـر الـيـوزر `@{(target_username)}` بـنـجـاح!**\n\n"
-            f"**⚠️┊ انـتـظـر 5 دقـائـق قـبـل إضـافـتـه لـحـسـابـك.**"
+            f"🛂┊ <b>تـمـت تـحـريـر الـيـوزر <code>@{html.escape(target_username)}</code> بـنـجـاح!</b>\n\n"
+            f"<b>⚠️┊ انـتـظـر 5 دقـائـق قـبـل إضـافـتـه لـحـسـابـك.</b>"
         )
     else:
-        msg = f"🛂┊ **لـم يـتـم الـعـثـور عـلـى الـيـوزر `@{(target_username)}` فـي أي حـسـاب تـمـلـكـه.**"
+        msg = f"🛂┊ <b>لـم يـتـم الـعـثـور عـلـى الـيـوزر <code>@{html.escape(target_username)}</code> فـي أي حـسـاب تـمـلـكـه.</b>"
         
-    bot.edit_message_text(msg, message.chat.id, status_msg.message_id, parse_mode="Markdown")
+    bot.edit_message_text(msg, message.chat.id, status_msg.message_id, parse_mode="HTML")
 
 
 
