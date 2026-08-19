@@ -2679,14 +2679,43 @@ async def check_all_resets_async(owner_id, chat_id, msg_id):
     if not accounts: 
         return bot.edit_message_text("❌ لا توجد حسابات مضافة.", chat_id, msg_id, reply_markup=home_keyboard(owner_id))
 
+    # جلب النتائج
     tasks = [check_single_reset_status(acc_id, phone, pyro_session, owner_id) for acc_id, phone, name, uid, pyro_session in accounts]
     results = await asyncio.gather(*tasks)
 
     active_count = sum(res[1] for res in results)
-    report_text = "".join(res[0] for res in results)
+    
+    # --- نظام تقسيم الرسائل الذكي لتفادي خطأ MESSAGE_TOO_LONG ---
+    text_chunks = []
+    current_text = f"⎉╎ الـجـلـسـات الـنـشـطـة الآن: {active_count} مـن أصـل {len(accounts)}\n\n🛂┊ نـتـيـجـة فـحـص الـحـسـابـات:\n\n"
+    
+    for res_text, _ in results:
+        # إذا اقتربنا من الحد الأقصى لتليجرام (حوالي 3900 حرف)، نخزن الرسالة ونفتح واحدة جديدة
+        if len(current_text) + len(res_text) > 3900:
+            text_chunks.append(current_text)
+            current_text = "🛂┊ تـكـمـلـة الـفـحـص:\n\n" + res_text
+        else:
+            current_text += res_text
+            
+    if current_text:
+        text_chunks.append(current_text)
 
-    final_text = f"⎉╎ الـجـلـسـات الـنـشـطـة الآن: {active_count} مـن أصـل {len(accounts)}\n\n🛂┊ نـتـيـجـة فـحـص الـحـسـابـات:\n\n{report_text}"
-    bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
+    # إرسال الرسائل المقسمة بانتظام
+    for i, chunk in enumerate(text_chunks):
+        is_last_chunk = (i == len(text_chunks) - 1)
+        # نضع أزرار التحكم فقط في الرسالة الأخيرة
+        markup = home_keyboard(owner_id) if is_last_chunk else None
+        
+        try:
+            if i == 0:
+                # الرسالة الأولى تعدل رسالة "جاري الفحص..."
+                bot.edit_message_text(chunk, chat_id, msg_id, parse_mode="Markdown", reply_markup=markup)
+            else:
+                # الرسائل التكميلية ترسل كرسائل جديدة
+                bot.send_message(chat_id, chunk, parse_mode="Markdown", reply_markup=markup)
+                await asyncio.sleep(0.3) # تجنب حظر تليجرام للإرسال السريع
+        except Exception as e:
+            print(f"حدث خطأ أثناء إرسال دفعة الفحص: {e}")
 
 # ==========================================
 # 4. المراقب الأمني الذكي (Lightweight Stealth Monitor) 🚀
@@ -4750,13 +4779,19 @@ def execute_unsurveil(call):
     bot.answer_callback_query(call.id, "تم الإلغاء", show_alert=False)
 
 if __name__ == "__main__":
-    logging.info("🚀 جاري إطلاق البوت بنظام السحب الفوري المباشر...")
+    logging.info("🚀 جاري إطلاق البوت...")
+    
     try:
         bot.remove_webhook()
     except Exception:
         pass
+        
     while True:
         try:
-            bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=15)
+            logging.info("📡 جاري الاتصال بسيرفرات تليجرام...")
+            # إجبار البوت على تجاهل أخطاء الشبكة والعمل باستمرار
+            bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=15, allowed_updates=telebot.util.update_types)
         except Exception as e:
-            time.sleep(3)
+            # لو انقطع النت من السيرفر، البوت سينتظر 5 ثواني ويحاول مجدداً ولن يطفى
+            logging.error(f"❌ انقطع الاتصال بالإنترنت من السيرفر! جاري إعادة المحاولة بعد 5 ثواني... \nالسبب: {e}")
+            time.sleep(5)
