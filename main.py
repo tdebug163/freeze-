@@ -2454,7 +2454,7 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـريـسـت والـقـفـل 🔒", callback_data="menu_pass_reset_manage"))
     
-    # الزر الجديد المضاف هنا
+    # زر اليوزرات اللي ضفناه
     markup.row(InlineKeyboardButton("• إدارة فـحـص الـيـوزرات 🔠", callback_data="usernames_manage"))
     
     markup.row(InlineKeyboardButton("• تـنـظـيـف شـامـل 🧹", callback_data="menu_clean"), InlineKeyboardButton("• جـلـب الـكـود ✉️", callback_data="req_code"))
@@ -2466,8 +2466,14 @@ def home_keyboard(uid):
 
     if uid in ADMIN_IDS:
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
-        markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"))
-        markup.row(InlineKeyboardButton("• تـدمـيـر وحـذف الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
+        markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• تـدمـيـر الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
+        
+        # 🔥 رجعنا حبيب الشعب (الشراء التلقائي LZT) هنا للآدمن
+        markup.row(InlineKeyboardButton("🛒 تخصيص الشراء التلقائي (LZT)", callback_data="auto_buy_menu"))
+        
+        # إذا تبي زر تيك توك يرجع شيل علامة المربع (#) من السطر اللي تحت:
+        # markup.row(InlineKeyboardButton("🎵 الشراء التلقائي (تيك توك)", callback_data="tt_auto_main"))
+
     return markup
 
 
