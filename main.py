@@ -2609,11 +2609,39 @@ async def process_start_reset_async(owner_id, target, chat_id, msg_id):
     results = await asyncio.gather(*tasks)
 
     success_count = sum(1 for r in results if "✅" in r)
-    report = "\n".join(results)
-    final_text = f"🛂┊ **تـقـريـر بـدء الـريـسـت:**\n⎉╎ الـنـجـاح: {success_count} مـن {len(accounts)}\n\n{report}"
+    
+    # --- نظام تقسيم الرسائل الذكي لتفادي خطأ MESSAGE_TOO_LONG ---
+    text_chunks = []
+    current_text = f"🛂┊ **تـقـريـر بـدء الـريـسـت:**\n⎉╎ الـنـجـاح: {success_count} مـن {len(accounts)}\n\n"
+    
+    for res_text in results:
+        line = res_text + "\n"
+        # إذا اقتربنا من الحد الأقصى لتليجرام، نخزن الرسالة ونبدأ رسالة جديدة
+        if len(current_text) + len(line) > 3900:
+            text_chunks.append(current_text)
+            current_text = "🛂┊ **تـكـمـلـة تـقـريـر الـريـسـت:**\n\n" + line
+        else:
+            current_text += line
+            
+    if current_text:
+        text_chunks.append(current_text)
 
-    bot.edit_message_text(final_text, chat_id, msg_id, parse_mode="Markdown", reply_markup=home_keyboard(owner_id))
-
+    # إرسال الرسائل المقسمة بانتظام
+    for i, chunk in enumerate(text_chunks):
+        is_last_chunk = (i == len(text_chunks) - 1)
+        # نضع زر الرجوع للقائمة فقط في الرسالة الأخيرة
+        markup = home_keyboard(owner_id) if is_last_chunk else None
+        
+        try:
+            if i == 0:
+                # الرسالة الأولى تعدل رسالة "جاري البدء..."
+                bot.edit_message_text(chunk, chat_id, msg_id, parse_mode="Markdown", reply_markup=markup)
+            else:
+                # الرسائل التكميلية ترسل كرسائل جديدة
+                bot.send_message(chat_id, chunk, parse_mode="Markdown", reply_markup=markup)
+                await asyncio.sleep(0.3) # وقت راحة بسيط لتجنب الحظر من تليجرام
+        except Exception as e:
+            pass
 # ==========================================
 # 3. نظام الفحص المعمق للريست 
 # ==========================================
