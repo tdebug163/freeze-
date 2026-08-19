@@ -5,3 +5,4 @@ flask
 pyTelegramBotAPI
 opentele
 aiohttp
+pymongo
