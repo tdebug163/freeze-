@@ -2493,9 +2493,12 @@ def home_keyboard(uid):
 
 #داله الاحالات هنا
 
+
+
+
 # ==========================================
 # 🇺🇲 نـظـام الإحـالات والـمـرآة الـشـامـلـة (V6 - الـنـسـخـة الـنـهـائـيـة)
-# شـامـل: الـ Mini Apps, الـتـنـظـيـف، إنـشـاء الـجـروبـات، الـتـفـاعـل، اسـتـخـراج الـجـلـسـة، تـعـديـل הـرسـالـة
+# شـامـل: الـ Mini Apps, الـتـنـظـيـف، إنـشـاء الـجـروبـات، الـتـفـاعـل، الانـضـمـام
 # ==========================================
 import re
 import time
@@ -2506,6 +2509,7 @@ from pyrogram.enums import ChatType, ChatMemberStatus
 from pyrogram.raw import functions, types
 from pyrogram.errors import FloodWait
 
+# الجلسة الافتراضية (في حال لم يقم المستخدم بتحديد حساب من حساباته)
 DEFAULT_MASTER_SESSION = "BAG3abEApn9HAeUDClfSg0Yr3ayAz-xleU2bL19tQq3hpCHKUSUXxhMa7pwhyVQ2-puKcgL9gZmOfBJDblYBeGmf1Gx1cVT2dFmdlc264OLbPYTNilnPpBXgLthMNjfaeCSqUkzJZhTYMWCMKSwivuO7WqZ7X9l_REJMSDQKRfVgyucr2QOKpm2MWjI9SM9FMcbV_CY1Pmq7S9OiFM4a7gt0JMyG_cwZumiCJwfYV1y7lCjaYqDNYN8vU8nv5To8X2u5LzGqi2ssMhWjWoOT5E4jqgH8RPy9_e6W2VRMQStebxoziBOc_XNvJjagZIAjulB445efkGDPFanhiiIcmq3LPpNGVQAAAAAAAAAAAA"
 
 REFERRAL_STATE = {}
@@ -2558,61 +2562,49 @@ def referral_menu_handler(call):
     )
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=referral_main_markup(call.from_user.id), parse_mode="Markdown")
 
+# ----------------------------------------------------
+# 1. نظام اختيار الحساب الافتراضي من قاعدة البيانات مباشرة (سريع وآمن)
+# ----------------------------------------------------
 @bot.callback_query_handler(func=lambda call: call.data == "ref_change_master")
 def ref_change_master_handler(call):
     if not is_allowed(call.from_user.id): return
-    msg = bot.edit_message_text("🛂┊ **تـغـيـيـر الـحـسـاب الافـتـراضـي:**\n\n•❐• أرسـل مـفـتـاح الـجـلـسـة (Session) أو الـ (Hex) لـحـسـابـك الـرئـيـسـي الآن:", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    USER_STATES[call.from_user.id] = {"action": "wait_for_master_session", "msg_id": msg.message_id}
-
-# ----------------------------------------------------
-# 1. دالة تسجيل الحساب الافتراضي (استخراج الجلسة الرسمية 100%)
-# ----------------------------------------------------
-@bot.message_handler(func=lambda m: m.from_user.id in USER_STATES and USER_STATES[m.from_user.id].get("action") == "wait_for_master_session")
-def handle_master_session_input(message):
-    uid = message.from_user.id
-    text = message.text.strip()
-    del USER_STATES[uid]
-    bot.reply_to(message, "⏳ **جـاري فـحـص وتـسـجـيـل الـحـسـاب الافـتـراضـي...**", parse_mode="Markdown")
     
-    async def verify_master():
-        client = None
-        try:
-            # نظام التقاط الـ Hex والسيرفر بذكاء
-            parts = text.split()
-            hex_key = None
-            dc_id = 2
-            
-            for p in parts:
-                if len(p) == 512 and all(c in '0123456789abcdefABCDEF' for c in p):
-                    hex_key = p
-                elif p.isdigit() and 1 <= int(p) <= 5:
-                    dc_id = int(p)
-                    
-            if hex_key:
-                pyro_sess, _ = generate_sessions(API_ID, dc_id, bytes.fromhex(hex_key), 9999)
-            else:
-                pyro_sess = convert_telethon_to_pyrogram(text)
-                
-            client = Client(f"mst_{uid}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_sess, in_memory=True)
-            await asyncio.wait_for(client.connect(), timeout=15)
-            me = await client.get_me()
-            
-            # 🔥 استخراج جلسة أصلية 100% لمنع التوقف أثناء المراقبة
-            real_pyro_sess = await client.export_session_string()
-            await client.disconnect()
-            
-            save_master_account(uid, f"+{me.phone_number}" if me.phone_number else "Unknown", me.first_name or "Master", real_pyro_sess)
-            return True, me.first_name or "Master", None
-            
-        except Exception as e:
-            if client and client.is_connected: await client.disconnect()
-            return False, "", str(e)
+    # جلب حسابات المستخدم من القاعدة
+    accounts = get_all_accounts(call.from_user.id)
+    if not accounts:
+        bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة في البوت لتحديدها كحساب افتراضي!", show_alert=True)
+        return
 
-    success, name, err = run_async(verify_master())
-    if success: 
-        bot.send_message(message.chat.id, f"✅ **تـم تـعـيـيـن `{name}` كـحـسـاب افـتـراضـي بـنـجـاح!**", reply_markup=referral_main_markup(uid), parse_mode="Markdown")
-    else: 
-        bot.send_message(message.chat.id, f"❌ **فـشـل الـتـسـجـيـل:**\n`{err}`", reply_markup=referral_main_markup(uid), parse_mode="Markdown")
+    markup = InlineKeyboardMarkup()
+    for acc_id, phone, name, uid, pyro_sess in accounts:
+        markup.row(InlineKeyboardButton(f"👤 {name} | {phone}", callback_data=f"ref_set_mst:{acc_id}"))
+    markup.row(InlineKeyboardButton("🔙 رجوع", callback_data="referral_menu"))
+
+    text = "🛂┊ **تـغـيـيـر الـحـسـاب الافـتـراضـي:**\n\n•❐• اخـتـر مـن حـسـابـاتـك الـمـسـجـلـة لـيـكـون هـو قـائـد الـمـراقـبـة (الـمـاسـتـر):"
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("ref_set_mst:"))
+def ref_set_master_callback(call):
+    if not is_allowed(call.from_user.id): return
+    acc_id = int(call.data.split(":")[1])
+    
+    # استخراج بيانات الحساب المحدد من القاعدة
+    acc = get_account(acc_id)
+    if not acc:
+        bot.answer_callback_query(call.id, "❌ الحساب غير موجود أو تم حذفه!", show_alert=True)
+        return
+
+    # acc -> (id, owner_id, phone, user_id, first_name, pyro_session, ...)
+    phone = acc[2]
+    name = acc[4]
+    pyro_sess = acc[5]
+    
+    # حفظ الحساب كافتراضي
+    save_master_account(call.from_user.id, phone, name, pyro_sess)
+    bot.answer_callback_query(call.id, f"✅ تم تعيين {name} كحساب افتراضي بنجاح!", show_alert=True)
+    
+    # العودة للقائمة
+    referral_menu_handler(call)
 
 # --- 🧹 نظام تنظيف الإحالات ---
 async def cleanup_campaign(uid):
@@ -2779,7 +2771,7 @@ async def execute_smart_campaign(uid, target_count, bot_username, app_name, payl
             except: pass
 
 # ----------------------------------------------------
-# 2. دالة المراقبة (تلتقط الأوامر، الحظر، الرسائل والتفاعلات)
+# 2. دالة المراقبة (محمية من خطأ EOF)
 # ----------------------------------------------------
 def extract_peer_id(peer):
     if isinstance(peer, types.PeerUser): return peer.user_id
@@ -2890,14 +2882,37 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
             except: pass
 
     try:
+        # فحص صلاحية الجلسة مسبقاً لتجنب خطأ EOF (طلب رقم هاتف)
+        await master_client.connect()
+        me = await master_client.get_me()
+        if not me:
+            raise EOFError("Unauthorized")
+        await master_client.disconnect()
+        
+        # إذا كانت الجلسة سليمة يتم تشغيل المراقبة
         await master_client.start()
-        while REFERRAL_STATE.get(uid, {}).get("is_running"): await asyncio.sleep(2)
+        while REFERRAL_STATE.get(uid, {}).get("is_running"): 
+            await asyncio.sleep(2)
+            
+    except EOFError:
+        err_msg = "❌ **فـشـل بـدء الـمـراقـبـة:**\nالـجـلـسـة الافـتـراضـيـة (الـمـاسـتـر) مـنـتـهـيـة أو تـالـفـة، يـرجـى تـغـيـيـرهـا واخـتـيـار حـسـاب آخـر."
+        try: bot.send_message(chat_id, err_msg, parse_mode="Markdown")
+        except: pass
+        if uid in REFERRAL_STATE: REFERRAL_STATE[uid]["is_running"] = False
+        
     except Exception as e:
         print(f"Error in master daemon: {e}")
         try: bot.send_message(chat_id, f"❌ **تـوقـفـت الـمـراقـبـة بـسـبـب خـطـأ:**\n`{str(e)}`", parse_mode="Markdown")
         except: pass
+        if uid in REFERRAL_STATE: REFERRAL_STATE[uid]["is_running"] = False
+        
     finally:
-        if master_client.is_connected: await master_client.stop()
+        if master_client.is_connected: 
+            try: await master_client.stop()
+            except: pass
+        # تحديث لوحة التحكم بعد التوقف
+        try: bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=referral_main_markup(uid))
+        except: pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "ref_start")
 def ref_start_action(call):
@@ -2908,7 +2923,7 @@ def ref_start_action(call):
         
     REFERRAL_STATE[uid] = { "is_running": True, "is_executing": False, "chat_id": call.message.chat.id, "msg_id": call.message.message_id, "completed": 0, "total": 0, "joined_channels": [], "current_bot": None }
     
-    text = "🛂┊ **نـظـام الإحـالات والـمـرآة הـشـامـلـة 🇺🇲**\n\n•❐• انـا أُراقـبـك الآن، أي تـفـاعـل/شـات/جـروب/مـسـح يـتـم تـقـلـيـده! 🪞\n⎉╎ أرسـل `.do` مـع الـرابـط פـي الـمـحـفـوظـات لـبـدء מـهـمـة."
+    text = "🛂┊ **نـظـام الإحـالات والـمـرآة الـشـامـلـة 🇺🇲**\n\n•❐• انـا أُراقـبـك الآن، أي تـفـاعـل/شـات/جـروب/مـسـح يـتـم تـقـلـيـده! 🪞\n⎉╎ أرسـل `.do` مـع الـرابـط فـي الـمـحـفـوظـات لـبـدء مـهـمـة."
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=referral_main_markup(uid), parse_mode="Markdown")
     threading.Thread(target=lambda: run_async(master_account_daemon(uid, master[2], call.message.chat.id, call.message.message_id)), daemon=True).start()
 
