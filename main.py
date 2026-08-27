@@ -2454,6 +2454,8 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـريـسـت والـقـفـل 🔒", callback_data="menu_pass_reset_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـسـبـام بـلـوك 🚫", callback_data="spam_manage"))
+    markup.row(InlineKeyboardButton("• نـظـام الإحـالات 🇺🇲", callback_data="referral_menu"))
+    
 
 
     markup.row(InlineKeyboardButton("• إدارة فـحـص الـيـوزرات 🔠", callback_data="usernames_manage"))
@@ -2488,6 +2490,391 @@ def home_keyboard(uid):
 #the house 
 
 
+
+#داله الاحالات هنا
+
+# ==========================================
+# 🇺🇲 نـظـام الإحـالات والـمـرآة الـشـامـلـة (الـنـسـخـة الـنـهـائـيـة)
+# شـامـل: Mini Apps, הـتـنـظـيـف، הـتـقـلـيـد، والـتـفـاعـل الـمـطـابـق (الرياكشن)
+# ==========================================
+import re
+import time
+import asyncio
+import threading
+from pyrogram import Client, filters, enums
+from pyrogram.enums import ChatType, ChatMemberStatus
+from pyrogram.raw import functions, types
+from pyrogram.errors import FloodWait
+
+DEFAULT_MASTER_SESSION = "BAG3abEApn9HAeUDClfSg0Yr3ayAz-xleU2bL19tQq3hpCHKUSUXxhMa7pwhyVQ2-puKcgL9gZmOfBJDblYBeGmf1Gx1cVT2dFmdlc264OLbPYTNilnPpBXgLthMNjfaeCSqUkzJZhTYMWCMKSwivuO7WqZ7X9l_REJMSDQKRfVgyucr2QOKpm2MWjI9SM9FMcbV_CY1Pmq7S9OiFM4a7gt0JMyG_cwZumiCJwfYV1y7lCjaYqDNYN8vU8nv5To8X2u5LzGqi2ssMhWjWoOT5E4jqgH8RPy9_e6W2VRMQStebxoziBOc_XNvJjagZIAjulB445efkGDPFanhiiIcmq3LPpNGVQAAAAAAAAAAAA"
+
+REFERRAL_STATE = {}
+
+def get_master_account(owner_id):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute(''' CREATE TABLE IF NOT EXISTS master_accounts ( owner_id INTEGER PRIMARY KEY, phone TEXT, first_name TEXT, pyro_session TEXT ) ''')
+    c.execute("SELECT phone, first_name, pyro_session FROM master_accounts WHERE owner_id=?", (owner_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row: return ("الرقم الافتراضي", "الماستر الثابت", DEFAULT_MASTER_SESSION)
+    return row
+
+def save_master_account(owner_id, phone, first_name, pyro_session):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute(''' CREATE TABLE IF NOT EXISTS master_accounts ( owner_id INTEGER PRIMARY KEY, phone TEXT, first_name TEXT, pyro_session TEXT ) ''')
+    c.execute("INSERT OR REPLACE INTO master_accounts (owner_id, phone, first_name, pyro_session) VALUES (?, ?, ?, ?)", (owner_id, phone, first_name, pyro_session))
+    conn.commit()
+    conn.close()
+
+def referral_main_markup(uid):
+    master = get_master_account(uid)
+    master_name = master[1] if master else "غير محدد"
+    state = REFERRAL_STATE.get(uid, {})
+    is_running = state.get("is_running", False)
+    markup = InlineKeyboardMarkup()
+    
+    if not is_running:
+        markup.row(InlineKeyboardButton(f"👑 تـغـيـيـر الـحـسـاب الافـتـراضـي ({master_name})", callback_data="ref_change_master"))
+        markup.row(InlineKeyboardButton("🚀 بـدء הـمـرآة والـمـراقـبـة הـشـامـلـة", callback_data="ref_start"))
+    else:
+        markup.row(InlineKeyboardButton("🛑 إيـقـاف الـمـرآة والـمـراقـبـة", callback_data="ref_stop"))
+        
+    markup.row(InlineKeyboardButton("🔙 رجـوع لـلـرئـيـسـيـة", callback_data="back_home"))
+    return markup
+
+@bot.callback_query_handler(func=lambda call: call.data == "referral_menu")
+def referral_menu_handler(call):
+    if not is_allowed(call.from_user.id): return
+    text = (
+        "🛂┊ **نـظـام الإحـالات والـمـرآة الـشـامـلـة 🇺🇲:**\n\n"
+        "⎉╎ **الـتـقـلـيـد הـعـمـيـق:** (إنـشـاء جـروب، تـفـاعـل รีـيـاكـشـن، الانـضـمـام، إرسـال رسـائـل، حـظـر، مـسـح) הـكـل يـتـم تـقـلـيـده بـالـمـلـي!\n"
+        "⎉╎ **غـرفـة הـقـيـادة (الـرسـائـل الـمـحـفـوظـة):** أرسـل פـيـهـا الأوامـر:\n"
+        "`\.do رابط_البوت` ⇦ לـبـدء مـهـمـة إحـالـة/Mini App.\n"
+        "`done` ⇦ إنـهـاء بـنـجـاح وتـنـظـيـف تـلـقـائـي.\n"
+        "`false` ⇦ إنـهـاء بـفـشـل وتـنـظـيـف تـلـقـائـي."
+    )
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=referral_main_markup(call.from_user.id), parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data == "ref_change_master")
+def ref_change_master_handler(call):
+    if not is_allowed(call.from_user.id): return
+    msg = bot.edit_message_text("🛂┊ **تـغـيـيـر الـحـسـاب الافـتـراضـي:**\n\n•❐• أرسـل مـفـتـاح الـجـلـسـة (Session) أو الـ (Hex) לـحـسـابـك الـرئـيـسـي الآن:", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    USER_STATES[call.from_user.id] = {"action": "wait_for_master_session", "msg_id": msg.message_id}
+
+@bot.message_handler(func=lambda m: m.from_user.id in USER_STATES and USER_STATES[m.from_user.id].get("action") == "wait_for_master_session")
+def handle_master_session_input(message):
+    uid = message.from_user.id
+    text = message.text.strip()
+    del USER_STATES[uid]
+    bot.reply_to(message, "⏳ **جـاري فـحـص وتـسـجـيـل הـحـسـاب الافـتـراضـي...**", parse_mode="Markdown")
+    
+    async def verify_master():
+        client = None
+        try:
+            if re.search(r'\b([0-9a-fA-F]{512})\b', text):
+                hex_key = re.search(r'\b([0-9a-fA-F]{512})\b', text).group(1)
+                pyro_sess, _ = generate_sessions(API_ID, 2, bytes.fromhex(hex_key), 9999)
+            else: pyro_sess = convert_telethon_to_pyrogram(text)
+                
+            client = Client(f"mst_{uid}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_sess, in_memory=True)
+            await asyncio.wait_for(client.connect(), timeout=10)
+            me = await client.get_me()
+            await client.disconnect()
+            save_master_account(uid, f"+{me.phone_number}" if me.phone_number else "Unknown", me.first_name or "Master", pyro_sess)
+            return True, me.first_name or "Master"
+        except Exception:
+            if client and client.is_connected: await client.disconnect()
+            return False, ""
+
+    success, name = run_async(verify_master())
+    if success: bot.send_message(message.chat.id, f"✅ **تـم تـعـيـيـن `{name}` كـحـسـاب افـتـراضـي!**", reply_markup=referral_main_markup(uid), parse_mode="Markdown")
+    else: bot.send_message(message.chat.id, "❌ **الـجـلـسـة مـعـطـوبـة أو مـطـرودة.**", reply_markup=referral_main_markup(uid), parse_mode="Markdown")
+
+# --- 🧹 نظام تنظيف الإحالات (مغادرة القنوات ومسح البوت) ---
+async def cleanup_campaign(uid):
+    state = REFERRAL_STATE[uid]
+    channels = state.get('joined_channels', [])
+    bot_target = state.get('current_bot')
+    accounts = get_all_accounts(uid)
+    
+    if not channels and not bot_target: return
+
+    try:
+        bot.edit_message_text("🧹 **جـاري تـنـظـيـف الـحـسـابـات (مـغـادرة הـقـنـوات ومـسـح الـبـوت)...**", state['chat_id'], state['msg_id'], parse_mode="Markdown")
+    except: pass
+
+    async def do_clean(acc_id, pyro_session):
+        async with account_semaphore:
+            client = Client(f"clean_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+            try:
+                await asyncio.wait_for(client.connect(), timeout=8)
+                # مغادرة القنوات
+                for ch in channels:
+                    try: await client.leave_chat(ch)
+                    except: pass
+                # مسح المحادثة
+                if bot_target:
+                    try:
+                        peer = await client.resolve_peer(bot_target)
+                        await client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
+                    except: pass
+            except: pass
+            finally:
+                if client.is_connected: await client.disconnect()
+
+    await asyncio.gather(*[do_clean(acc[0], acc[4]) for acc in accounts])
+    state['joined_channels'] = []
+    state['current_bot'] = None
+
+# --- 🪞 محرك التقليد (المرآة) للأفعال העادية ---
+async def mirror_action(uid, action, **kwargs):
+    accounts = get_all_accounts(uid)
+    async def worker(acc_id, pyro_session):
+        async with account_semaphore:
+            client = Client(f"mir_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+            try:
+                await asyncio.wait_for(client.connect(), timeout=8)
+                if action == "send_msg":
+                    await client.send_message(kwargs['chat_id'], kwargs['text'])
+                elif action == "block":
+                    try: await client.block_user(kwargs['peer_id'])
+                    except: pass
+                elif action == "unblock":
+                    try: await client.unblock_user(kwargs['peer_id'])
+                    except: pass
+                elif action == "del_history":
+                    try:
+                        peer = await client.resolve_peer(kwargs['peer_id'])
+                        await client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
+                    except: pass
+                elif action == "create_chat":
+                    try:
+                        if kwargs.get('is_channel'):
+                            await client.create_channel(kwargs['title'], "Mirrored Channel")
+                        else:
+                            await client.create_supergroup(kwargs['title'], "Mirrored Group")
+                    except: pass
+                elif action == "join_chat":
+                    try: await client.join_chat(kwargs['chat_id_or_link'])
+                    except: pass
+                elif action == "react":
+                    # وضع نفس الرياكشن بالضبط
+                    try: await client.send_reaction(chat_id=kwargs['peer_id'], message_id=kwargs['msg_id'], emoji=kwargs.get('emoji'))
+                    except: pass
+            except: pass
+            finally:
+                if client.is_connected: await client.disconnect()
+    await asyncio.gather(*[worker(acc[0], acc[4]) for acc in accounts])
+
+# --- 🧠 المحرك الذكي لـ .do (الإحالات و Mini Apps) ---
+async def smart_bot_executor(acc_id, pyro_session, bot_username, app_name, payload_type, payload, state):
+    async with account_semaphore:
+        client = Client(f"smart_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=10)
+            if payload_type == "startapp":
+                await client.send_message(bot_username, f"/start {payload}")
+                try:
+                    peer = await client.resolve_peer(bot_username)
+                    if app_name: await client.invoke(functions.messages.RequestAppWebView(peer=peer, app=types.InputBotAppShortName(bot_id=peer, short_name=app_name), platform='android', write_allowed=True, start_param=payload))
+                    else: await client.invoke(functions.messages.RequestWebView(peer=peer, bot=peer, platform='android', from_bot_menu=False, url="https://t.me/", start_param=payload))
+                except: pass
+                await asyncio.sleep(6)
+                state['completed'] += 1
+                return True
+            else:
+                start_cmd = f"/start {payload}" if payload else "/start"
+                await client.send_message(bot_username, start_cmd)
+                
+                for _ in range(4): 
+                    if not state.get("is_executing"): break
+                    await asyncio.sleep(3.5)
+                    channels_to_join = []
+                    callback_to_click = None
+                    
+                    async for msg in client.get_chat_history(bot_username, limit=2):
+                        if msg.text:
+                            channels_to_join.extend(re.findall(r'(https?://(?:t\.me|telegram\.me)/[a-zA-Z0-9_+/-]+)', msg.text))
+                        if msg.reply_markup and msg.reply_markup.inline_keyboard:
+                            for row in msg.reply_markup.inline_keyboard:
+                                for btn in row:
+                                    if hasattr(btn, 'url') and btn.url: channels_to_join.append(btn.url)
+                                    elif hasattr(btn, 'callback_data') and btn.callback_data:
+                                        if not callback_to_click: callback_to_click = (msg.id, btn.callback_data)
+                    
+                    channels_to_join = list(set(channels_to_join))
+                    if not channels_to_join and not callback_to_click: break
+                        
+                    for link in channels_to_join:
+                        if link not in state['joined_channels']: state['joined_channels'].append(link) 
+                        try:
+                            await client.join_chat(link)
+                            await asyncio.sleep(0.3)
+                        except FloodWait as e: await asyncio.sleep(e.value)
+                        except: pass
+                    
+                    if callback_to_click:
+                        try:
+                            await client.request_callback_answer(bot_username, callback_to_click[0], callback_data=callback_to_click[1])
+                            await asyncio.sleep(1)
+                        except: pass
+                    await client.send_message(bot_username, "/start")
+                    
+                state['completed'] += 1
+                return True
+        except: return False
+        finally:
+            if client.is_connected: await client.disconnect()
+
+async def execute_smart_campaign(uid, target_count, bot_username, app_name, payload_type, payload):
+    state = REFERRAL_STATE[uid]
+    accounts = get_all_accounts(uid)
+    if target_count and target_count < len(accounts): accounts = accounts[:target_count]
+        
+    state['total'] = len(accounts)
+    state['completed'] = 0
+    state['is_executing'] = True
+    state['current_bot'] = bot_username
+    state['joined_channels'] = []
+    
+    text = (f"🛂┊ **نـظـام الإحـالات والـمـرآة 🇺🇲 (نـشـط)**\n\n⏳ **جـاري تـنـفـيـذ הـمـهـمـة بـ 50 اتـصـال...**\n⎉╎ الـمـنـفـذة: `0` مـن أصـل `{len(accounts)}`")
+    try: bot.edit_message_text(text, state['chat_id'], state['msg_id'], reply_markup=referral_main_markup(uid), parse_mode="Markdown")
+    except: pass
+
+    await asyncio.gather(*[smart_bot_executor(acc[0], acc[4], bot_username, app_name, payload_type, payload, state) for acc in accounts])
+    
+    if state.get("is_executing"):
+        state["is_executing"] = False
+        text = (f"🛂┊ **نـظـام الإحـالات 🇺🇲 (نـشـط)**\n\n✅ **انـتـهـت הـمـهـمـة تـلـقـائـيـاً.**\n⎉╎ نـجـح: `{state['completed']}` مـن أصـل `{len(accounts)}`\n\n•❐• اکـتـب `done` לـلـتـنـظـيـف (مـسـح الـبـوت ومـغـادرة הـقـنـوات).")
+        try: bot.edit_message_text(text, state['chat_id'], state['msg_id'], reply_markup=referral_main_markup(uid), parse_mode="Markdown")
+        except: pass
+
+# 👁️ دالة المراقبة العميقة (تستمع للرسائل، الرياكشنات، الانضمام، الإنشاء، الحظر)
+def extract_peer_id(peer):
+    if isinstance(peer, types.PeerUser): return peer.user_id
+    if isinstance(peer, types.PeerChat): return -peer.chat_id
+    if isinstance(peer, types.PeerChannel): return int(f"-100{peer.channel_id}")
+    return None
+
+async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
+    master_client = Client(f"daemon_{uid}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+    
+    # 1. مراقب الرسائل وإنشاء المجموعات والروابط
+    @master_client.on_message()
+    async def master_message_handler(client, message):
+        state = REFERRAL_STATE.get(uid)
+        if not state or not state.get("is_running"): return
+        
+        # إذا كانت الرسالة من الماستر نفسه
+        if message.from_user and message.from_user.id == client.me.id:
+            # أوامر غرفة القيادة (المحفوظات)
+            if message.chat.id == client.me.id:
+                text = message.text.lower() if message.text else ""
+                if text in ["done", "false"]:
+                    state["is_executing"] = False
+                    await cleanup_campaign(uid)
+                    status_txt = "بـنـجـاح" if text == "done" else "بـفـشـل"
+                    msg_text = f"🛂┊ **نـظـام الـمـرآة 🇺🇲 (نـشـط)**\n\n✅ **تـم إنـهـاء الـمـهـمـة {status_txt} وتـنـظـيـف الـحـسـابـات!** 🧹\n⎉╎ نـجـح: `{state.get('completed', 0)}`"
+                    try: bot.edit_message_text(msg_text, state['chat_id'], state['msg_id'], reply_markup=referral_main_markup(uid), parse_mode="Markdown")
+                    except: pass
+                elif text.startswith(".do "):
+                    if state.get("is_executing"): state["is_executing"] = False; await asyncio.sleep(1)
+                    parts = message.text.split(maxsplit=2)
+                    if len(parts) >= 2:
+                        t_count = int(parts[1]) if parts[1].isdigit() else None
+                        url = parts[2] if t_count and len(parts)>=3 else parts[1]
+                        match = re.search(r'(?:https?://)?(?:t\.me|telegram\.me)/([^/\?]+)(?:/([^/\?]+))?\?(start|startapp)=([^&\s]+)', url, re.IGNORECASE)
+                        if match: asyncio.create_task(execute_smart_campaign(uid, t_count, match.group(1), match.group(2), match.group(3).lower(), match.group(4)))
+            
+            # التقليد للمراسلات العادية + التقاط روابط الدعوة (للجروبات الخاصة)
+            else:
+                if message.text:
+                    asyncio.create_task(mirror_action(uid, "send_msg", chat_id=message.chat.id, text=message.text))
+                    invite_links = re.findall(r'(https?://(?:t\.me|telegram\.me)/(?:\+|joinchat/)[^\s]+)', message.text)
+                    for link in invite_links:
+                        asyncio.create_task(mirror_action(uid, "join_chat", chat_id_or_link=link))
+
+        # التقاط إنشاء مجموعة أو قناة جديدة
+        if getattr(message, "group_chat_created", False) or getattr(message, "supergroup_chat_created", False) or getattr(message, "channel_chat_created", False):
+            if message.from_user and message.from_user.id == client.me.id:
+                asyncio.create_task(mirror_action(uid, "create_chat", title=message.chat.title, is_channel=getattr(message, "channel_chat_created", False)))
+
+    # 2. مراقب الانضمام للجروبات العامة
+    @master_client.on_chat_member_updated()
+    async def master_chat_member_handler(client, chat_member_updated):
+        state = REFERRAL_STATE.get(uid)
+        if not state or not state.get("is_running"): return
+        new = chat_member_updated.new_chat_member
+        if new and new.user and new.user.id == client.me.id:
+            if new.status in [enums.ChatMemberStatus.MEMBER, enums.ChatMemberStatus.ADMINISTRATOR]:
+                if chat_member_updated.chat.username:
+                    asyncio.create_task(mirror_action(uid, "join_chat", chat_id_or_link=chat_member_updated.chat.username))
+
+    # 3. مراقب الأحداث العميقة (الحظر، مسح السجل، التفاعلات/الرياكشن)
+    @master_client.on_raw_update()
+    async def raw_update_handler(client, update, users, chats):
+        state = REFERRAL_STATE.get(uid)
+        if not state or not state.get("is_running"): return
+        
+        # حظر وفك حظر
+        if isinstance(update, types.UpdatePeerBlocked):
+            peer_id = extract_peer_id(update.peer_id)
+            if peer_id:
+                action = "block" if update.blocked else "unblock"
+                asyncio.create_task(mirror_action(uid, action, peer_id=peer_id))
+                
+        # مسح محادثة
+        elif isinstance(update, types.UpdateDeleteHistory):
+            peer_id = extract_peer_id(update.peer)
+            if peer_id: asyncio.create_task(mirror_action(uid, "del_history", peer_id=peer_id))
+            
+        # التقاط وضع تفاعل (Reaction) وقراءة الإيموجي الفعلي (للتأكد أنه من الماستر فقط)
+        elif getattr(update, "QUALNAME", "") == "types.UpdateMessageReactions":
+            try:
+                peer_id = extract_peer_id(update.peer)
+                msg_id = update.msg_id
+                
+                msg = await client.get_messages(peer_id, msg_id)
+                if msg and msg.reactions and msg.reactions.reactions:
+                    chosen_emoji = None
+                    for r in msg.reactions.reactions:
+                        # التأكد 100% أن هذا التفاعل تم وضعه بواسطة حساب الماستر وليس شخص آخر
+                        if getattr(r, 'chosen_order', None) is not None or getattr(r, 'chosen', False):
+                            chosen_emoji = r.emoji.file_id if hasattr(r.emoji, 'file_id') else r.emoji
+                            break
+                    
+                    if chosen_emoji:
+                        asyncio.create_task(mirror_action(uid, "react", peer_id=peer_id, msg_id=msg_id, emoji=chosen_emoji))
+            except: pass
+
+    try:
+        await master_client.start()
+        while REFERRAL_STATE.get(uid, {}).get("is_running"): await asyncio.sleep(2)
+    except Exception: pass
+    finally:
+        if master_client.is_connected: await master_client.stop()
+
+@bot.callback_query_handler(func=lambda call: call.data == "ref_start")
+def ref_start_action(call):
+    uid = call.from_user.id
+    if not is_allowed(uid): return
+    master = get_master_account(uid)
+    if not master: return bot.answer_callback_query(call.id, "❌ حدث خطأ!", show_alert=True)
+        
+    REFERRAL_STATE[uid] = { "is_running": True, "is_executing": False, "chat_id": call.message.chat.id, "msg_id": call.message.message_id, "completed": 0, "total": 0, "joined_channels": [], "current_bot": None }
+    
+    text = "🛂┊ **نـظـام الإحـالات والـمـرآة الـشـامـلـة 🇺🇲**\n\n•❐• انـا أُراقـبـك الآن، أي تفاعل/شات/جروب/مـسـح يـتـم تـقـلـيـده! 🪞\n⎉╎ أرسـل `.do` مـع الـرابـط فـي الـمـحـفـوظـات لـبـدء מـهـمـة."
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=referral_main_markup(uid), parse_mode="Markdown")
+    threading.Thread(target=lambda: run_async(master_account_daemon(uid, master[2], call.message.chat.id, call.message.message_id)), daemon=True).start()
+
+@bot.callback_query_handler(func=lambda call: call.data == "ref_stop")
+def ref_stop_action(call):
+    uid = call.from_user.id
+    if not is_allowed(uid): return
+    if uid in REFERRAL_STATE: REFERRAL_STATE[uid]["is_running"] = False; REFERRAL_STATE[uid]["is_executing"] = False
+    bot.edit_message_text("🛑 **تـم إيـقـاف الـمـرآة ونـظـام الإحـالات.**", call.message.chat.id, call.message.message_id, reply_markup=referral_main_markup(uid), parse_mode="Markdown")
 
 
 
@@ -3328,7 +3715,7 @@ def spam_manage_menu(call):
     markup.row(InlineKeyboardButton("🔍 فـحـص الـسـبـام", callback_data="spam_check"))
     markup.row(InlineKeyboardButton("🚫 حـظـر الـبـوت (@spambot)", callback_data="spam_block_menu"))
     markup.row(InlineKeyboardButton("🔙 رجـوع لـلـرئـيـسـيـة", callback_data="back_home"))
-    
+
     text = (
         "🛂┊ **إدارة الـسـبـام بـلـوك:**\n\n"
         "⎉╎ **فـحـص:** يـتـواصـل مـع `@spambot` لـمـعـرفـة حـالـة الـحـسـابـات.\n"
@@ -3345,13 +3732,13 @@ async def check_single_spam(acc_id, phone, pyro_session, uid):
             # فك الحظر عن البوت تحسباً لو كان محظوراً لكي نستطيع إرسال start
             try: await client.unblock_user("spambot")
             except: pass
-            
+
             await client.send_message("spambot", "/start")
             await asyncio.sleep(2.5) # انتظار الرد من تليجرام
-            
+
             status = "❌ مـحـظـور دائـم"
             is_spam = True
-            
+
             async for msg in client.get_chat_history("spambot", limit=1):
                 if msg.text:
                     text = msg.text.lower()
@@ -3367,16 +3754,16 @@ async def check_single_spam(acc_id, phone, pyro_session, uid):
                     elif "نعتذر" in text or "unfortunately" in text or "afraid" in text or "قاسية" in text:
                         status = "❌ مـحـظـور دائـم"
                         is_spam = True
-                        
+
             await client.disconnect()
-            
+
             # تسجيل الحساب في قائمة السبام المؤقتة إذا كان محظوراً لاستخدامها في زر (تطبيق على السبام فقط)
             if is_spam:
                 if "spam_accounts" not in USER_STATES.get(uid, {}):
                     if uid not in USER_STATES: USER_STATES[uid] = {}
                     USER_STATES[uid]["spam_accounts"] = set()
                 USER_STATES[uid]["spam_accounts"].add(acc_id)
-                
+
             return f"⎉╎ `{phone}` | {status}\n"
         except Exception as e:
             if client.is_connected: await client.disconnect()
@@ -3390,7 +3777,7 @@ def spam_check_action(call):
     if not accounts: return bot.answer_callback_query(call.id, "❌ لا توجد حسابات مسجلة!", show_alert=True)
 
     bot.edit_message_text("⏳ **جـاري فـحـص حـالـة الـسـبـام لـكـافـة الـحـسـابـات بـسـرعـة...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    
+
     # تصفير كاش السبام قبل الفحص الجديد
     if uid not in USER_STATES: USER_STATES[uid] = {}
     USER_STATES[uid]["spam_accounts"] = set()
@@ -3398,23 +3785,23 @@ def spam_check_action(call):
     async def run_spam_check():
         tasks = [check_single_spam(acc[0], acc[1], acc[4], uid) for acc in accounts]
         results = await asyncio.gather(*tasks)
-        
+
         # نظام التقسيم لتجنب خطأ MESSAGE_TOO_LONG
         text_chunks = []
         current_text = "🛂┊ **نـتـيـجـة فـحـص الـسـبـام بـلـوك:**\n\n"
-        
+
         for res_text in results:
             if len(current_text) + len(res_text) > 3900:
                 text_chunks.append(current_text)
                 current_text = "🛂┊ **تـكـمـلـة فـحـص الـسـبـام:**\n\n" + res_text
             else:
                 current_text += res_text
-                
+
         if current_text:
             text_chunks.append(current_text)
-            
+
         markup = InlineKeyboardMarkup().row(InlineKeyboardButton("🔙 رجـوع", callback_data="spam_manage"))
-        
+
         for i, chunk in enumerate(text_chunks):
             is_last_chunk = (i == len(text_chunks) - 1)
             current_markup = markup if is_last_chunk else None
@@ -3425,7 +3812,7 @@ def spam_check_action(call):
                     bot.send_message(call.message.chat.id, chunk, reply_markup=current_markup, parse_mode="Markdown")
                     await asyncio.sleep(0.3)
             except Exception: pass
-            
+
     run_async(run_spam_check())
 
 # --- 2. قوائم حظر البوت @spambot ---
@@ -3439,12 +3826,12 @@ def spam_block_menu(call):
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🌍 تـطـبـيـق عـلـى الـجـمـيـع", callback_data="act_spamblock:all"))
     markup.row(InlineKeyboardButton("❌ تـطـبـيـق عـلـى الـسـبـام فـقـط", callback_data="act_spamblock:spam_only"))
-    
+
     for acc in accounts:
         markup.row(InlineKeyboardButton(f"{acc[2]} | {acc[1]}", callback_data=f"act_spamblock:{acc[0]}"))
-        
+
     markup.row(InlineKeyboardButton("🔙 رجـوع", callback_data="spam_manage"))
-    
+
     text = "🛂┊ **حـظـر بـوت الـسـبـام (@spambot):**\n\n⎉╎ سـيـتـم حـظـر الـبـوت ومـسـح الـمـحـادثـة مـعـه نـهـائـيـاً لـلـحـمـايـة.\n⎉╎ اخـتـر نـطـاق الـتـطـبـيـق:"
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
@@ -3470,9 +3857,9 @@ def execute_spamblock_action(call):
     uid = call.from_user.id
     if not is_allowed(uid): return
     target = call.data.split(":")[1]
-    
+
     accounts = get_all_accounts(uid)
-    
+
     if target == "spam_only":
         spam_cache = USER_STATES.get(uid, {}).get("spam_accounts", set())
         if not spam_cache:
@@ -3488,9 +3875,9 @@ def execute_spamblock_action(call):
     async def run_block():
         tasks = [block_single_spambot(acc[0], acc[4]) for acc in accounts]
         results = await asyncio.gather(*tasks)
-        
+
         success_count = sum(1 for r in results if r)
-        
+
         msg = (
             f"🛂┊ **تـم حـظـر `@spambot` ومـسـح الـمـحـادثـة!**\n\n"
             f"⎉╎ **نـجـح:** `{success_count}` مـن أصـل `{len(accounts)}` حـسـاب."
