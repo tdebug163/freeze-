@@ -2487,15 +2487,25 @@ def home_keyboard(uid):
 
 
 #داله المنزل
-#the house 
+#the house
+
+
 
 
 
 #داله الاحالات هنا
 
+
+
+
+
+
+
+
+
 # ==========================================
-# 🇺🇲 نـظـام الإحـالات والـمـرآة الـشـامـلـة (V8 - الكشاف والسرب بالـ Raw API + التنظيف الذكي)
-# شـامـل: الـ Mini Apps, الـتـنـظـيـف، إنـشـاء الـجـروبـات، الـتـفـاعـل، الانـضـمـام، الـمـغـادرة
+# 🇺🇲 نـظـام الإحـالات والـمـرآة الـشـامـلـة (النسخة المستقرة - الكشاف والسرب + التنظيف بالآيدي)
+# شـامـل: الـ Mini Apps, الـتـنـظـيـف الذكي، إنـشـاء الـجـروبـات، الـتـفـاعـل، الانـضـمـام
 # ==========================================
 import re
 import time
@@ -2549,7 +2559,7 @@ def referral_menu_handler(call):
     if not is_allowed(call.from_user.id): return
     text = (
         "🛂┊ **نـظـام الإحـالات والـمـرآة الـشـامـلـة 🇺🇲:**\n\n"
-        "⎉╎ **الـتـقـلـيـد الـعـمـيـق:** (إنـشـاء جـروب، تـفـاعـل ريـاكـشـن، الانـضـمـام والمغادرة، إرسـال رسـائـل، حـظـر، مـسـح) הـكـل يـتـم تـقـلـيـده بـالـمـلـي!\n"
+        "⎉╎ **الـتـقـلـيـد الـعـمـيـق:** (إنـشـاء جـروب، تـفـاعـل ريـاكـشـن، الانـضـمـام، إرسـال رسـائـل، حـظـر) الـكـل يـتـم تـقـلـيـده بـالـمـلـي!\n"
         "⎉╎ **غـرفـة الـقـيـادة (الـرسـائـل الـمـحـفـوظـة):** أرسـل فـيـهـا الأوامـر:\n"
         "`.do رابط_البوت` ⇦ لـبـدء مـهـمـة إحـالـة بـكـل الـحـسـابـات (خوارزمية السرب).\n"
         "`.do 20 رابط_البوت` ⇦ لـلـتـطـبـيـق بـ 20 حـسـاب فـقـط.\n"
@@ -2587,7 +2597,7 @@ def ref_set_master_callback(call):
     referral_menu_handler(call)
 
 async def cleanup_campaign(uid):
-    """المحرك الصارم لتنظيف الحسابات بناءً على الآيديات المسحوبة مسبقاً"""
+    """دالة التنظيف والمغادرة بالآيدي (الدالة العبقرية لسحب الآيدي والمغادرة)"""
     state = REFERRAL_STATE.get(uid, {})
     channels = state.get('joined_channels', [])
     bot_target = state.get('current_bot')
@@ -2602,36 +2612,45 @@ async def cleanup_campaign(uid):
             client = Client(f"clean_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
             try:
                 await asyncio.wait_for(client.connect(), timeout=8)
-                # مغادرة القنوات بذكاء
+                
+                # مغادرة القنوات عبر الآيدي الرقمي المسحوب
                 for ch_info in channels:
-                    chat_to_leave = ch_info.get('chat_id')
-                    # إذا لم يتوفر آيدي، نستخرج اليوزر من الرابط
-                    if not chat_to_leave:
-                        link = ch_info['link'].replace("https://t.me/", "").replace("http://t.me/", "").strip("/")
-                        if not (link.startswith("+") or link.startswith("joinchat/")):
-                            chat_to_leave = link.split("?")[0]
-                    if chat_to_leave:
-                        try: await client.leave_chat(chat_to_leave)
-                        except: pass
-                        
-                # حذف شات البوت نهائياً
+                    target_id = ch_info.get('chat_id') if isinstance(ch_info, dict) else None
+                    
+                    # إذا لم يتوفر آيدي وكانت عامة، نستخدم اليوزر
+                    if not target_id and isinstance(ch_info, dict):
+                        link = ch_info.get('link', '')
+                        clean_link = link.replace("https://t.me/", "").replace("http://t.me/", "").strip("/")
+                        if not (clean_link.startswith("+") or clean_link.startswith("joinchat/")):
+                            target_id = clean_link.split("?")[0]
+                            
+                    if target_id:
+                        try:
+                            await client.leave_chat(target_id)
+                        except:
+                            pass
+                
+                # حذف المحادثة نهائياً من الطرفين
                 if bot_target:
                     try:
                         peer = await client.resolve_peer(bot_target)
                         await client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
-                    except: pass
-            except: pass
+                    except:
+                        pass
+            except:
+                pass
             finally:
-                if client.is_connected: await client.disconnect()
+                if client.is_connected:
+                    await client.disconnect()
 
     await asyncio.gather(*[do_clean(acc[0], acc[4]) for acc in accounts])
-    # تفريغ الذاكرة بعد التنظيف
+    
     if uid in REFERRAL_STATE:
         REFERRAL_STATE[uid]['joined_channels'] = []
         REFERRAL_STATE[uid]['current_bot'] = None
 
 async def mirror_action(uid, action, **kwargs):
-    """محرك التقليد الشامل للحسابات"""
+    """محرك التقليد الشامل للحسابات (تم إلغاء تقليد المغادرة للحماية)"""
     accounts = get_all_accounts(uid)
     async def worker(acc_id, pyro_session):
         async with account_semaphore:
@@ -2648,7 +2667,6 @@ async def mirror_action(uid, action, **kwargs):
                     if kwargs.get('is_channel'): await client.create_channel(kwargs['title'], "Mirrored Channel")
                     else: await client.create_supergroup(kwargs['title'], "Mirrored Group")
                 elif action == "join_chat": await client.join_chat(kwargs['chat_id_or_link'])
-                elif action == "leave_chat": await client.leave_chat(kwargs['chat_id_or_link'])
                 elif action == "react": await client.send_reaction(chat_id=kwargs['peer_id'], message_id=kwargs['msg_id'], emoji=kwargs.get('emoji'))
             except: pass
             finally:
@@ -2656,37 +2674,52 @@ async def mirror_action(uid, action, **kwargs):
     await asyncio.gather(*[worker(acc[0], acc[4]) for acc in accounts])
 
 # =========================================================================
-# 🧠 الخوارزمية العبقرية (V8): الكشاف والسرب (عبر الـ Raw API الإجباري)
+# 🧠 الخوارزمية العبقرية: الكشاف والسرب (عبر الـ Raw API الإجباري)
 # =========================================================================
 
 async def raw_join_chat(client, link):
-    """دالة الانضمام الإجبارية عبر جذور تليجرام (Raw API) مع جلب آيدي القناة لضمان التنظيف"""
+    """دالة الانضمام وسحب الآيدي بدقة (للتعامل مع الروابط الخاصة والعامة)"""
     try:
-        link = link.replace("https://t.me/", "").replace("http://t.me/", "").strip("/")
+        clean_link = link.replace("https://t.me/", "").replace("http://t.me/", "").strip("/")
         chat_id = None
-        if link.startswith("+") or link.startswith("joinchat/"):
-            hash_str = link.replace("joinchat/", "").replace("+", "")
+        
+        # قناة أو جروب خاص
+        if clean_link.startswith("+") or clean_link.startswith("joinchat/"):
+            hash_str = clean_link.replace("joinchat/", "").replace("+", "")
             res = await client.invoke(functions.messages.ImportChatInvite(hash=hash_str))
+            
+            # استخراج الآيدي من كائن الرد مهما كان نوعه
             if hasattr(res, 'chats') and res.chats:
                 chat_id = int(f"-100{res.chats[0].id}")
+            elif hasattr(res, 'updates'):
+                for u in res.updates:
+                    if hasattr(u, 'channel_id'):
+                        chat_id = int(f"-100{u.channel_id}")
+                        break
+                    elif hasattr(u, 'chat_id'):
+                        chat_id = int(f"-{u.chat_id}")
+                        break
+        # قناة عامة (يوزر)
         else:
-            username = link.split("?")[0]
+            username = clean_link.split("?")[0]
             peer = await client.resolve_peer(username)
             res = await client.invoke(functions.channels.JoinChannel(channel=peer))
-            if hasattr(res, 'chats') and res.chats:
+            if hasattr(peer, 'channel_id'):
+                chat_id = int(f"-100{peer.channel_id}")
+            elif hasattr(res, 'chats') and res.chats:
                 chat_id = int(f"-100{res.chats[0].id}")
+                
         return True, chat_id
+        
     except Exception as e:
-        # إذا كان مشتركاً بالفعل، نحاول استخراج الـ ID
-        if "USER_ALREADY_PARTICIPANT" in str(e):
+        err = str(e)
+        if "USER_ALREADY_PARTICIPANT" in err:
+            # محاولة جلب الآيدي إذا كان الحساب مشتركاً بالفعل
             try:
-                if not (link.startswith("+") or link.startswith("joinchat/")):
-                    username = link.split("?")[0]
-                    peer = await client.resolve_peer(username)
-                    if hasattr(peer, 'channel_id'): chat_id = int(f"-100{peer.channel_id}")
-                    elif hasattr(peer, 'chat_id'): chat_id = int(f"-{peer.chat_id}")
-            except: pass
-            return True, chat_id
+                chat = await client.get_chat(link)
+                return True, chat.id
+            except:
+                return True, None
         elif isinstance(e, FloodWait):
             await asyncio.sleep(e.value)
             return True, None
@@ -2770,8 +2803,7 @@ async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scou
             
         joined_any = False
         for link in channels_to_join_links:
-            # تجنب تكرار الانضمام وتخزين البيانات
-            if not any(x['link'] == link for x in state['joined_channels']):
+            if not any(x.get('link') == link for x in state.get('joined_channels', [])):
                 success_join, chat_id = await raw_join_chat(client, link)
                 if success_join: 
                     joined_any = True
@@ -2881,7 +2913,6 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
         if not state or not state.get("is_running"): return
         
         if message.from_user and message.from_user.id == client.me.id:
-            # أوامر غرفة القيادة (الرسائل المحفوظة)
             if message.chat.id == client.me.id:
                 text = message.text.lower() if message.text else ""
                 if text in ["done", "false"]:
@@ -2938,13 +2969,10 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
         if not state or not state.get("is_running"): return
         new = chat_member_updated.new_chat_member
         if new and new.user and new.user.id == client.me.id:
-            # إذا دخل الجروب أو القناة يدوياً (التقليد)
+            # تقليد الانضمام فقط (تم إلغاء تقليد المغادرة للحماية)
             if new.status in [enums.ChatMemberStatus.MEMBER, enums.ChatMemberStatus.ADMINISTRATOR]:
                 if chat_member_updated.chat.username:
                     asyncio.create_task(mirror_action(uid, "join_chat", chat_id_or_link=chat_member_updated.chat.username))
-            # إذا غادر أو تم طرده من الجروب أو القناة (التقليد)
-            elif new.status in [enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED]:
-                asyncio.create_task(mirror_action(uid, "leave_chat", chat_id_or_link=chat_member_updated.chat.id))
 
     @master_client.on_raw_update()
     async def raw_update_handler(client, update, users, chats):
