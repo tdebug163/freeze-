@@ -2496,16 +2496,9 @@ def home_keyboard(uid):
 #داله الاحالات هنا
 
 
-
-
-
-
-
-
-
 # ==========================================
-# 🇺🇲 نـظـام الإحـالات والـمـرآة الـشـامـلـة (النسخة المستقرة - الكشاف والسرب + التنظيف بالآيدي)
-# شـامـل: الـ Mini Apps, الـتـنـظـيـف الذكي، إنـشـاء الـجـروبـات، الـتـفـاعـل، الانـضـمـام
+# 🇺🇲 نـظـام الإحـالات والـمـرآة الـشـامـلـة (V8 - الكشاف والسرب بالـ Raw API)
+# شـامـل: الـ Mini Apps, الـتـنـظـيـف، إنـشـاء الـجـروبـات، الـتـفـاعـل، الانـضـمـام
 # ==========================================
 import re
 import time
@@ -2559,11 +2552,11 @@ def referral_menu_handler(call):
     if not is_allowed(call.from_user.id): return
     text = (
         "🛂┊ **نـظـام الإحـالات والـمـرآة الـشـامـلـة 🇺🇲:**\n\n"
-        "⎉╎ **الـتـقـلـيـد الـعـمـيـق:** (إنـشـاء جـروب، تـفـاعـل ريـاكـشـن، الانـضـمـام، إرسـال رسـائـل، حـظـر) الـكـل يـتـم تـقـلـيـده بـالـمـلـي!\n"
+        "⎉╎ **الـتـقـلـيـد الـعـمـيـق:** (إنـشـاء جـروب، تـفـاعـل ريـاكـشـن، الانـضـمـام، إرسـال رسـائـل، حـظـر، مـسـح) الـكـل يـتـم تـقـلـيـده بـالـمـلـي!\n"
         "⎉╎ **غـرفـة الـقـيـادة (الـرسـائـل الـمـحـفـوظـة):** أرسـل فـيـهـا الأوامـر:\n"
         "`.do رابط_البوت` ⇦ لـبـدء مـهـمـة إحـالـة بـكـل الـحـسـابـات (خوارزمية السرب).\n"
         "`.do 20 رابط_البوت` ⇦ لـلـتـطـبـيـق بـ 20 حـسـاب فـقـط.\n"
-        "`done` ⇦ إنـهـاء بـنـجـاح وتـنـظـيـف تـلـقـائـي (مغادرة القنوات وحذف البوت).\n"
+        "`done` ⇦ إنـهـاء بـنـجـاح وتـنـظـيـف تـلـقـائـي.\n"
         "`false` ⇦ إنـهـاء بـفـشـل وتـنـظـيـف تـلـقـائـي."
     )
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=referral_main_markup(call.from_user.id), parse_mode="Markdown")
@@ -2597,8 +2590,7 @@ def ref_set_master_callback(call):
     referral_menu_handler(call)
 
 async def cleanup_campaign(uid):
-    """دالة التنظيف والمغادرة بالآيدي (الدالة العبقرية لسحب الآيدي والمغادرة)"""
-    state = REFERRAL_STATE.get(uid, {})
+    state = REFERRAL_STATE[uid]
     channels = state.get('joined_channels', [])
     bot_target = state.get('current_bot')
     accounts = get_all_accounts(uid)
@@ -2612,45 +2604,23 @@ async def cleanup_campaign(uid):
             client = Client(f"clean_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
             try:
                 await asyncio.wait_for(client.connect(), timeout=8)
-                
-                # مغادرة القنوات عبر الآيدي الرقمي المسحوب
-                for ch_info in channels:
-                    target_id = ch_info.get('chat_id') if isinstance(ch_info, dict) else None
-                    
-                    # إذا لم يتوفر آيدي وكانت عامة، نستخدم اليوزر
-                    if not target_id and isinstance(ch_info, dict):
-                        link = ch_info.get('link', '')
-                        clean_link = link.replace("https://t.me/", "").replace("http://t.me/", "").strip("/")
-                        if not (clean_link.startswith("+") or clean_link.startswith("joinchat/")):
-                            target_id = clean_link.split("?")[0]
-                            
-                    if target_id:
-                        try:
-                            await client.leave_chat(target_id)
-                        except:
-                            pass
-                
-                # حذف المحادثة نهائياً من الطرفين
+                for ch in channels:
+                    try: await client.leave_chat(ch)
+                    except: pass
                 if bot_target:
                     try:
                         peer = await client.resolve_peer(bot_target)
                         await client.invoke(functions.messages.DeleteHistory(peer=peer, max_id=0, revoke=True))
-                    except:
-                        pass
-            except:
-                pass
+                    except: pass
+            except: pass
             finally:
-                if client.is_connected:
-                    await client.disconnect()
+                if client.is_connected: await client.disconnect()
 
     await asyncio.gather(*[do_clean(acc[0], acc[4]) for acc in accounts])
-    
-    if uid in REFERRAL_STATE:
-        REFERRAL_STATE[uid]['joined_channels'] = []
-        REFERRAL_STATE[uid]['current_bot'] = None
+    state['joined_channels'] = []
+    state['current_bot'] = None
 
 async def mirror_action(uid, action, **kwargs):
-    """محرك التقليد الشامل للحسابات (تم إلغاء تقليد المغادرة للحماية)"""
     accounts = get_all_accounts(uid)
     async def worker(acc_id, pyro_session):
         async with account_semaphore:
@@ -2674,56 +2644,27 @@ async def mirror_action(uid, action, **kwargs):
     await asyncio.gather(*[worker(acc[0], acc[4]) for acc in accounts])
 
 # =========================================================================
-# 🧠 الخوارزمية العبقرية: الكشاف والسرب (عبر الـ Raw API الإجباري)
+# 🧠 الخوارزمية العبقرية (V8): الكشاف والسرب (عبر الـ Raw API الإجباري)
 # =========================================================================
 
 async def raw_join_chat(client, link):
-    """دالة الانضمام وسحب الآيدي بدقة (للتعامل مع الروابط الخاصة والعامة)"""
+    """دالة الانضمام الإجبارية عبر جذور تليجرام (Raw API)"""
     try:
-        clean_link = link.replace("https://t.me/", "").replace("http://t.me/", "").strip("/")
-        chat_id = None
-        
-        # قناة أو جروب خاص
-        if clean_link.startswith("+") or clean_link.startswith("joinchat/"):
-            hash_str = clean_link.replace("joinchat/", "").replace("+", "")
-            res = await client.invoke(functions.messages.ImportChatInvite(hash=hash_str))
-            
-            # استخراج الآيدي من كائن الرد مهما كان نوعه
-            if hasattr(res, 'chats') and res.chats:
-                chat_id = int(f"-100{res.chats[0].id}")
-            elif hasattr(res, 'updates'):
-                for u in res.updates:
-                    if hasattr(u, 'channel_id'):
-                        chat_id = int(f"-100{u.channel_id}")
-                        break
-                    elif hasattr(u, 'chat_id'):
-                        chat_id = int(f"-{u.chat_id}")
-                        break
-        # قناة عامة (يوزر)
+        link = link.replace("https://t.me/", "").replace("http://t.me/", "").strip("/")
+        if link.startswith("+") or link.startswith("joinchat/"):
+            hash_str = link.replace("joinchat/", "").replace("+", "")
+            await client.invoke(functions.messages.ImportChatInvite(hash=hash_str))
         else:
-            username = clean_link.split("?")[0]
+            username = link.split("?")[0]
             peer = await client.resolve_peer(username)
-            res = await client.invoke(functions.channels.JoinChannel(channel=peer))
-            if hasattr(peer, 'channel_id'):
-                chat_id = int(f"-100{peer.channel_id}")
-            elif hasattr(res, 'chats') and res.chats:
-                chat_id = int(f"-100{res.chats[0].id}")
-                
-        return True, chat_id
-        
+            await client.invoke(functions.channels.JoinChannel(channel=peer))
+        return True
     except Exception as e:
-        err = str(e)
-        if "USER_ALREADY_PARTICIPANT" in err:
-            # محاولة جلب الآيدي إذا كان الحساب مشتركاً بالفعل
-            try:
-                chat = await client.get_chat(link)
-                return True, chat.id
-            except:
-                return True, None
+        if "USER_ALREADY_PARTICIPANT" in str(e): return True
         elif isinstance(e, FloodWait):
             await asyncio.sleep(e.value)
-            return True, None
-        return False, None
+            return True
+        return False
 
 async def raw_click_button(client, bot_username, msg_id, callback_data):
     """دالة ضغط أزرار الانلاين الإجبارية (Raw API)"""
@@ -2749,8 +2690,8 @@ async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scou
     
     # ------------------ خوارزمية السرب (التنفيذ السريع) ------------------
     if not is_scout and known_channels:
-        for ch_info in known_channels:
-            await raw_join_chat(client, ch_info['link'])
+        for link in known_channels:
+            await raw_join_chat(client, link)
             await asyncio.sleep(0.5)
         
         await client.send_message(bot_username, start_cmd)
@@ -2780,7 +2721,7 @@ async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scou
         if not state.get("is_executing"): break
         await asyncio.sleep(3) 
         
-        channels_to_join_links = []
+        channels_to_join = []
         callback_to_click = None
         
         async for msg in client.get_chat_history(bot_username, limit=3):
@@ -2788,28 +2729,27 @@ async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scou
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         if hasattr(btn, 'url') and btn.url:
-                            channels_to_join_links.append(btn.url)
+                            channels_to_join.append(btn.url)
                         elif hasattr(btn, 'callback_data') and btn.callback_data:
                             if not callback_to_click:
                                 callback_to_click = (msg.id, btn.callback_data)
                                 
             if msg.text:
                 text_links = re.findall(r'(https?://(?:t\.me|telegram\.me)/[a-zA-Z0-9_+/-]+)', msg.text)
-                channels_to_join_links.extend(text_links)
+                channels_to_join.extend(text_links)
                 
-        channels_to_join_links = list(set(channels_to_join_links))
+        channels_to_join = list(set(channels_to_join))
         
-        if not channels_to_join_links and not callback_to_click: break
+        if not channels_to_join and not callback_to_click: break
             
         joined_any = False
-        for link in channels_to_join_links:
-            if not any(x.get('link') == link for x in state.get('joined_channels', [])):
-                success_join, chat_id = await raw_join_chat(client, link)
-                if success_join: 
-                    joined_any = True
-                    ch_info = {'link': link, 'chat_id': chat_id}
-                    state['joined_channels'].append(ch_info)
-                    newly_found_channels.append(ch_info)
+        for link in channels_to_join:
+            if link not in state['joined_channels']: 
+                state['joined_channels'].append(link)
+                newly_found_channels.append(link)
+                
+            success_join = await raw_join_chat(client, link)
+            if success_join: joined_any = True
             await asyncio.sleep(0.5)
             
         if callback_to_click:
@@ -2969,7 +2909,6 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
         if not state or not state.get("is_running"): return
         new = chat_member_updated.new_chat_member
         if new and new.user and new.user.id == client.me.id:
-            # تقليد الانضمام فقط (تم إلغاء تقليد المغادرة للحماية)
             if new.status in [enums.ChatMemberStatus.MEMBER, enums.ChatMemberStatus.ADMINISTRATOR]:
                 if chat_member_updated.chat.username:
                     asyncio.create_task(mirror_action(uid, "join_chat", chat_id_or_link=chat_member_updated.chat.username))
