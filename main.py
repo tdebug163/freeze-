@@ -2493,25 +2493,15 @@ def home_keyboard(uid):
 
 #داله الاحالات هنا
 
-
-
-
-
-
-
-
-
-
-
 # ==========================================
-# 🇺🇲 نـظـام الإحـالات والـمـرآة الـشـامـلـة (V7 - خوارزمية الكشاف والسرب)
+# 🇺🇲 نـظـام الإحـالات والـمـرآة الـشـامـلـة (V8 - الكشاف والسرب بالـ Raw API)
 # شـامـل: الـ Mini Apps, الـتـنـظـيـف، إنـشـاء الـجـروبـات، الـتـفـاعـل، الانـضـمـام
 # ==========================================
 import re
 import time
 import asyncio
 import threading
-from pyrogram import Client, filters, enums
+from pyrogram import Client, enums
 from pyrogram.enums import ChatType, ChatMemberStatus
 from pyrogram.raw import functions, types
 from pyrogram.errors import FloodWait
@@ -2651,104 +2641,121 @@ async def mirror_action(uid, action, **kwargs):
     await asyncio.gather(*[worker(acc[0], acc[4]) for acc in accounts])
 
 # =========================================================================
-# 🧠 الخوارزمية العبقرية: الكشاف والسرب (Scout & Swarm)
+# 🧠 الخوارزمية العبقرية (V8): الكشاف والسرب (عبر الـ Raw API الإجباري)
 # =========================================================================
 
+async def raw_join_chat(client, link):
+    """دالة الانضمام الإجبارية عبر جذور تليجرام (Raw API)"""
+    try:
+        link = link.replace("https://t.me/", "").replace("http://t.me/", "").strip("/")
+        if link.startswith("+") or link.startswith("joinchat/"):
+            hash_str = link.replace("joinchat/", "").replace("+", "")
+            await client.invoke(functions.messages.ImportChatInvite(hash=hash_str))
+        else:
+            username = link.split("?")[0]
+            peer = await client.resolve_peer(username)
+            await client.invoke(functions.channels.JoinChannel(channel=peer))
+        return True
+    except Exception as e:
+        if "USER_ALREADY_PARTICIPANT" in str(e): return True
+        elif isinstance(e, FloodWait):
+            await asyncio.sleep(e.value)
+            return True
+        return False
+
+async def raw_click_button(client, bot_username, msg_id, callback_data):
+    """دالة ضغط أزرار الانلاين الإجبارية (Raw API)"""
+    try:
+        peer = await client.resolve_peer(bot_username)
+        await client.invoke(
+            functions.messages.GetBotCallbackAnswer(
+                peer=peer,
+                msg_id=msg_id,
+                data=callback_data
+            )
+        )
+        return True
+    except Exception as e:
+        if isinstance(e, FloodWait): await asyncio.sleep(e.value)
+        return False
+
 async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scout=False, known_channels=None):
-    """
-    الدالة الذكية التي تقرأ رسائل البوت، تستخرج قنوات الاشتراك الاجباري من أزرار الانلاين،
-    وتضغط زر التحقق.
-    """
-    if known_channels is None:
-        known_channels = []
+    """المحرك الذكي: يقرأ، ينضم بالقوة، يضغط الزر، ويتأكد."""
+    if known_channels is None: known_channels = []
     
     start_cmd = f"/start {payload}" if payload else "/start"
-    await client.send_message(bot_username, start_cmd)
     
-    # إذا كانت العملية ليست استكشاف، ولدينا قنوات معروفة، نشترك بها فوراً (خوارزمية السرب)
+    # ------------------ خوارزمية السرب (التنفيذ السريع) ------------------
     if not is_scout and known_channels:
         for link in known_channels:
-            try:
-                await client.join_chat(link)
-                await asyncio.sleep(0.5)
-            except FloodWait as e: await asyncio.sleep(e.value)
-            except: pass
+            await raw_join_chat(client, link)
+            await asyncio.sleep(0.5)
         
-        # بعد الاشتراك السريع، نرسل ستارت ونضغط زر التحقق
         await client.send_message(bot_username, start_cmd)
-        await asyncio.sleep(2)
+        await asyncio.sleep(2.5)
+        
+        clicked = False
         async for msg in client.get_chat_history(bot_username, limit=2):
             if msg.reply_markup and msg.reply_markup.inline_keyboard:
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         if hasattr(btn, 'callback_data') and btn.callback_data:
-                            try:
-                                await client.request_callback_answer(bot_username, msg.id, callback_data=btn.callback_data)
-                            except: pass
-                            break # ضغطنا زر التحقق، نخرج
+                            await raw_click_button(client, bot_username, msg.id, btn.callback_data)
+                            clicked = True
+                            break
+                    if clicked: break
+            if clicked: break
+            
+        await asyncio.sleep(1)
         await client.send_message(bot_username, start_cmd)
         return True, known_channels
 
-    # ================== خوارزمية الكشاف (الاستكشاف العميق) ==================
+    # ------------------ خوارزمية الكشاف (الاستكشاف العميق) ------------------
+    await client.send_message(bot_username, start_cmd)
     newly_found_channels = []
-    for step in range(3): # المحاولة 3 مرات كحد أقصى لتخطي الاشتراك الاجباري
+    
+    for step in range(3): 
         if not state.get("is_executing"): break
-        await asyncio.sleep(4) # انتظار رسالة البوت
+        await asyncio.sleep(3) 
         
         channels_to_join = []
         callback_to_click = None
         
         async for msg in client.get_chat_history(bot_username, limit=3):
-            # فحص أزرار الانلاين (روابط القنوات + زر التحقق)
             if msg.reply_markup and msg.reply_markup.inline_keyboard:
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         if hasattr(btn, 'url') and btn.url:
                             channels_to_join.append(btn.url)
                         elif hasattr(btn, 'callback_data') and btn.callback_data:
-                            # نلتقط أول زر كول باك (غالباً هو زر التحقق من الاشتراك)
                             if not callback_to_click:
                                 callback_to_click = (msg.id, btn.callback_data)
                                 
-            # فحص النص العادي كخطة بديلة إذا كانت الروابط في النص
             if msg.text:
                 text_links = re.findall(r'(https?://(?:t\.me|telegram\.me)/[a-zA-Z0-9_+/-]+)', msg.text)
                 channels_to_join.extend(text_links)
                 
-        # إزالة التكرار
         channels_to_join = list(set(channels_to_join))
         
-        # إذا لم نجد روابط جديدة ولم نجد زر تحقق، يعني أن البوت مفتوح وتم تخطي الاشتراك
-        if not channels_to_join and not callback_to_click:
-            break
+        if not channels_to_join and not callback_to_click: break
             
-        # الاشتراك بالقنوات
         joined_any = False
         for link in channels_to_join:
             if link not in state['joined_channels']: 
                 state['joined_channels'].append(link)
                 newly_found_channels.append(link)
-            try:
-                await client.join_chat(link)
-                joined_any = True
-                await asyncio.sleep(1)
-            except FloodWait as e: await asyncio.sleep(e.value)
-            except: pass
-            
-        # الضغط على زر التحقق
-        if callback_to_click:
-            try:
-                await client.request_callback_answer(bot_username, callback_to_click[0], callback_data=callback_to_click[1])
-                await asyncio.sleep(2)
-            except Exception as e:
-                pass
                 
-        # إعادة إرسال ستارت للتأكد من الفتح
+            success_join = await raw_join_chat(client, link)
+            if success_join: joined_any = True
+            await asyncio.sleep(0.5)
+            
+        if callback_to_click:
+            await raw_click_button(client, bot_username, callback_to_click[0], callback_to_click[1])
+            await asyncio.sleep(1.5)
+                
         await client.send_message(bot_username, start_cmd)
         
-        # إذا في هذه الدورة لم نقم بالاشتراك بأي قناة جديدة، نتوقف لمنع اللوب اللانهائي
-        if not joined_any and not callback_to_click:
-            break
+        if not joined_any and not callback_to_click: break
             
     return True, newly_found_channels
 
@@ -2758,26 +2765,27 @@ async def worker_bot_executor(acc_id, pyro_session, bot_username, app_name, payl
         try:
             await asyncio.wait_for(client.connect(), timeout=10)
             
-            # التعامل مع تطبيقات الميني آب (Mini Apps)
             if payload_type == "startapp":
                 await client.send_message(bot_username, f"/start {payload}" if payload else "/start")
                 try:
                     peer = await client.resolve_peer(bot_username)
-                    if app_name: await client.invoke(functions.messages.RequestAppWebView(peer=peer, app=types.InputBotAppShortName(bot_id=peer, short_name=app_name), platform='android', write_allowed=True, start_param=payload))
-                    else: await client.invoke(functions.messages.RequestWebView(peer=peer, bot=peer, platform='android', from_bot_menu=False, url="https://t.me/", start_param=payload))
+                    if app_name: 
+                        await client.invoke(functions.messages.RequestAppWebView(peer=peer, app=types.InputBotAppShortName(bot_id=peer, short_name=app_name), platform='android', write_allowed=True, start_param=payload))
+                    else: 
+                        await client.invoke(functions.messages.RequestWebView(peer=peer, bot=peer, platform='android', from_bot_menu=False, url="https://t.me/", start_param=payload))
                 except: pass
                 await asyncio.sleep(4)
                 state['completed'] += 1
                 return True, []
                 
-            # التعامل مع البوتات العادية (مع خوارزمية الاشتراك الاجباري)
             else:
                 success, found_channels = await parse_and_join_bot_logic(client, bot_username, payload, state, is_scout, known_channels)
-                if success:
-                    state['completed'] += 1
+                if success: state['completed'] += 1
                 return success, found_channels
                 
-        except: return False, []
+        except Exception as e:
+            print(f"Error in worker {acc_id}: {e}")
+            return False, []
         finally:
             if client.is_connected: await client.disconnect()
 
@@ -2794,23 +2802,20 @@ async def execute_smart_campaign(uid, target_count, bot_username, app_name, payl
     state['current_bot'] = bot_username
     if 'joined_channels' not in state: state['joined_channels'] = []
     
-    # ---------------- المرحلة الأولى: الكشاف (Scout) ----------------
     scout_acc = accounts[0]
     swarm_accs = accounts[1:]
     
-    scout_text = (f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n🕵️‍♂️ **جـاري الاسـتـكـشـاف:**\n⎉╎ يـقـوم حـسـاب الـكـشـاف بـفـحـص الانـلايـن وقـنـوات الاشـتـراك لـ `{bot_username}`...")
+    scout_text = (f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n🕵️‍♂️ **جـاري الاسـتـكـشـاف:**\n⎉╎ يـقـوم حـسـاب الـكـشـاف بـفـحـص الانـلايـن وقـنـوات الاشـتـراك لـ `@{bot_username}`...")
     try: bot.edit_message_text(scout_text, state['chat_id'], state['msg_id'], reply_markup=referral_main_markup(uid), parse_mode="Markdown")
     except: pass
     if saved_msg_obj:
         try: await saved_msg_obj.edit_text(scout_text)
         except: pass
 
-    # تشغيل الكشاف
     _, known_channels = await worker_bot_executor(scout_acc[0], scout_acc[4], bot_username, app_name, payload_type, payload, state, is_scout=True)
     
     if not state.get("is_executing"): return
     
-    # ---------------- المرحلة الثانية: هجوم السرب (Swarm) ----------------
     swarm_text = (f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n🚀 **بـدأ هـجـوم الـسـرب:**\n⎉╎ الـقـنـوات الـمـكـتـشـفـة: `{len(known_channels)}`\n⏳ جـاري دخـول `{len(swarm_accs)}` حـسـاب فـي نـفـس الـلـحـظـة...")
     try: bot.edit_message_text(swarm_text, state['chat_id'], state['msg_id'], reply_markup=referral_main_markup(uid), parse_mode="Markdown")
     except: pass
@@ -2818,11 +2823,9 @@ async def execute_smart_campaign(uid, target_count, bot_username, app_name, payl
         try: await saved_msg_obj.edit_text(swarm_text)
         except: pass
 
-    # تشغيل باقي الحسابات متوازية مع تزويدها بالقنوات المعروفة لتدخلها فوراً
     if swarm_accs:
         await asyncio.gather(*[worker_bot_executor(acc[0], acc[4], bot_username, app_name, payload_type, payload, state, is_scout=False, known_channels=known_channels) for acc in swarm_accs])
     
-    # ---------------- إنهاء المهمة ----------------
     if state.get("is_executing"):
         state["is_executing"] = False
         final_text = (f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n✅ **تـمـت الـمـهـمـة بـنـجـاح.**\n⎉╎ الـحـسـابـات الـتـي دخـلـت: `{state['completed']}` مـن أصـل `{len(accounts)}`\n\n•❐• اكـتـب `done` لـلـتـنـظـيـف (مـسـح الـبـوت ومـغـادرة الـقـنـوات).")
@@ -2847,7 +2850,6 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
         if not state or not state.get("is_running"): return
         
         if message.from_user and message.from_user.id == client.me.id:
-            # أوامر غرفة القيادة (الرسائل المحفوظة)
             if message.chat.id == client.me.id:
                 text = message.text.lower() if message.text else ""
                 if text in ["done", "false"]:
@@ -2887,7 +2889,6 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
                             
                             asyncio.create_task(execute_smart_campaign(uid, target_count, bot_username, app_name, payload_type, payload, message))
             
-            # التقليد للمراسلات العادية والانضمام من روابط الدعوة
             else:
                 if message.text:
                     asyncio.create_task(mirror_action(uid, "send_msg", chat_id=message.chat.id, text=message.text))
