@@ -2556,7 +2556,7 @@ def referral_main_markup(uid):
 
 @bot.callback_query_handler(func=lambda call: call.data == "referral_menu")
 def referral_menu_handler(call):
-    if not is_allowed(call.fromuser.id): return
+    if not is_allowed(call.from_user.id): return
     text = (
         "🛂┊ **نـظـام الإحـالات والـمـرآة الـشـامـلـة 🇺🇲:**\n\n"
         "⎉╎ **الـتـقـلـيـد الـعـمـيـق:** (إنـشـاء جـروب، تـفـاعـل ريـاكـشـن، الانـضـمـام، إرسـال رسـائـل، حـظـر، مـسـح) الـكـل يـتـم تـقـلـيـده بـالـمـلـي!\n"
