@@ -61,9 +61,12 @@ except ImportError:
 except BaseException:
     OPENTELE_AVAILABLE = False
 
-API_ID = 28797361
-API_HASH = "771041b32e83ab232e066b7adeee700b" 
-BOT_TOKEN = "8927846217:AAHBUMoIfzx6ds06MVNIiDjk4FxxXyUxEnA"
+import os
+
+API_ID = int(os.environ.get("API_ID"))
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
 
 ADMIN_IDS = [445421092, 6114298715, 8516187605, 936283959]
 LOG_CHANNEL = "@I_HATE_YOO"
