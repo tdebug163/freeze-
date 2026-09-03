@@ -2606,7 +2606,7 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إدارة الإزالـة الـتـلـقـائـيـة ⏱️", callback_data="autoterm_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـريـسـت والـقـفـل 🔒", callback_data="menu_pass_reset_manage"))
     markup.row(InlineKeyboardButton("• إدارة الـسـبـام بـلـوك 🚫", callback_data="spam_manage"))
-markup.row(InlineKeyboardButton("• تـجـديـد الـجـلـسـات ♻️", callback_data="menu_renew_manage"))
+    markup.row(InlineKeyboardButton("• تـجـديـد الـجـلـسـات ♻️", callback_data="menu_renew_manage"))
     markup.row(InlineKeyboardButton("• نـظـام الإحـالات 🇺🇲", callback_data="referral_menu"))
     
 
