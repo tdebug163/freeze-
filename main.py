@@ -3587,14 +3587,28 @@ import logging
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram import Client
-from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
-from pyrogram.raw.types import EmailVerifyPurposeLoginChange, EmailVerifyPurposeLoginSetup, EmailVerificationCode
-from pyrogram.errors import FloodWait, RPCError
+from pyrogram.errors import FloodWait as PyrogramFloodWait, RPCError as PyrogramRPCError
+
+# ==========================================
+# 📥 استيراد مكتبة تليثون (للهجين - ضروري جداً)
+# ==========================================
+try:
+    from telethon import TelegramClient as TelethonClient
+    from telethon.sessions import StringSession
+    from telethon.tl.functions.account import SendVerifyEmailCodeRequest, VerifyEmailRequest
+    from telethon.tl.types import EmailVerifyPurposeLoginChange as TelethonChange
+    from telethon.tl.types import EmailVerificationCode as TelethonCode
+    from telethon.errors import FloodWaitError as TelethonFloodWait
+    from telethon.errors import RPCError as TelethonRPCError
+    TELETHON_AVAILABLE = True
+except ImportError:
+    TELETHON_AVAILABLE = False
+    logging.error("❌ مكتبة Telethon غير مثبتة! رجاءً قم بتشغيل: pip install telethon")
 
 # متغيرات النظام
 DEFAULT_TEMP_MAIL_SESSION = "AgG3abEAYPDujY3v3PhDd3o3NJHcrWTBNIGxnPG-noiTAyEWdqwh9Mn7WnlHyPuikN7nLittWXZDog_ovVCVM51M4SmO2EQKcbcGJpHm7wAO5QNpeWuyjedVQGfcAeypnexYsvts7rlXvJ3_w-NPi3GHVV9I0VVrSOO0l2Qs7FxQ8yxUUAsmDjBQPSJfqei8zChQqnbQCmVO5pZzh-xbH-qZ2j7Qf14j2i3NiOLGdAYNatyXBzrQ9PtsDs716KTCNesKIRaDJYcgr-GZqoE__QeYfhmCwBCXRvthKH6waVxUGvIPXqrT3nG2hs7UeSaGOwVxWkc08_GkEmWicSPzCtQg9z59cAAAAAGovYleAA"
 
-# تخزين العمال المختارين لكل مستخدم (في الذاكرة المؤقتة)
+# تخزين العمال المختارين لكل مستخدم
 USER_WORKERS = {}
 
 # ==========================================
@@ -3615,9 +3629,9 @@ def auto_email_menu_handler(call):
         if uid not in USER_WORKERS:
             USER_WORKERS[uid] = set()
 
-        workers_count = len(USER_WORKERS[uid]) + 1  # +1 للحساب الافتراضي
+        workers_count = len(USER_WORKERS[uid]) + 1
         text = (
-            "📧 **أتمتة تغيير الإيميل السريع**\n\n"
+            "📧 **أتمتة تغيير الإيميل السريع (هجين)**\n\n"
             f"👥 **العمال الحاليون:** {workers_count} (يشمل العامل الافتراضي)\n\n"
             "1. أضف حساباتك كعمال لتسريع العملية (اختياري).\n"
             "2. ابدأ العملية واختر الحسابات المستهدفة.\n"
@@ -3667,7 +3681,6 @@ def toggle_worker_cb(call):
         else:
             USER_WORKERS[uid].add(acc_id)
 
-        # إعادة تحميل نفس القائمة لتبقى ظاهرة
         manage_workers_cb(call)
     except Exception as e:
         logging.error(f"Error in toggle_worker_cb: {e}")
@@ -3700,6 +3713,10 @@ def start_email_targets_cb(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('exec_email_'))
 def execute_email_change_cb(call):
     try:
+        if not TELETHON_AVAILABLE:
+            bot.answer_callback_query(call.id, "⚠️ يجب تثبيت Telethon أولاً: pip install telethon", show_alert=True)
+            return
+
         uid = call.from_user.id
         chat_id = call.message.chat.id
         msg_id = call.message.message_id
@@ -3707,7 +3724,6 @@ def execute_email_change_cb(call):
         all_accounts = get_all_accounts(uid)
         accounts_dict = {acc[0]: acc for acc in all_accounts}
 
-        # تحديد الأهداف
         if call.data == 'exec_email_all':
             target_ids = list(accounts_dict.keys())
         else:
@@ -3716,7 +3732,6 @@ def execute_email_change_cb(call):
 
         targets = [accounts_dict[tid] for tid in target_ids if tid in accounts_dict]
 
-        # تحديد العمال (نجمع كل العمال المتاحين)
         if uid not in USER_WORKERS:
             USER_WORKERS[uid] = set()
 
@@ -3735,13 +3750,12 @@ def execute_email_change_cb(call):
             bot.answer_callback_query(call.id, "❌ لا يوجد عمال متاحون.", show_alert=True)
             return
 
-        # تحقق: على الأقل عامل واحد ليس هدفاً لكي يغيرهم
         target_sessions = set([t[4] for t in targets])
         non_target_workers = [ws for ws in worker_sessions if ws not in target_sessions]
         if not non_target_workers:
             bot.answer_callback_query(
                 call.id,
-                "⚠️ كل العمال المختارين هم أيضاً أهداف! أضف عاملاً آخر (أو العامل الافتراضي) ليقوم بتغييرهم.",
+                "⚠️ كل العمال المختارين هم أيضاً أهداف! أضف عاملاً آخر ليقوم بتغييرهم.",
                 show_alert=True
             )
             return
@@ -3764,7 +3778,7 @@ def execute_email_change_cb(call):
         logging.error(f"Error in execute_email_change_cb: {e}\n{traceback.format_exc()}")
 
 # ==========================================
-# 📧 دوال الإيميل المؤقت (جلب الإيميل والكود)
+# 📧 دوال الإيميل المؤقت (عن طريق بايروجرام)
 # ==========================================
 async def fetch_temp_mail(worker_client):
     try:
@@ -3774,7 +3788,7 @@ async def fetch_temp_mail(worker_client):
         logging.info("ℹ️ إرسال /start لبوت الإيميل المؤقت...")
         await worker_client.send_message("TempMail_org_bot", "/start")
 
-        for _ in range(10):  # 20 ثانية انتظار
+        for _ in range(10):
             await asyncio.sleep(2)
             async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=3):
                 if msg.id > last_msg_id and msg.text:
@@ -3784,7 +3798,7 @@ async def fetch_temp_mail(worker_client):
                         logging.info(f"✅ تم جلب الإيميل: {email}")
                         return email, msg.id
 
-        logging.error("❌ مراقب: انتهى الوقت ولم يتم العثور على إيميل في رسائل البوت!")
+        logging.error("❌ مراقب: انتهى الوقت ولم يتم العثور على إيميل!")
         return None, 0
     except Exception as e:
         logging.error(f"❌ مراقب [fetch_temp_mail]: {e}\n{traceback.format_exc()}")
@@ -3793,7 +3807,7 @@ async def fetch_temp_mail(worker_client):
 async def wait_for_email_code(worker_client, last_msg_id):
     try:
         logging.info("ℹ️ بانتظار وصول الكود...")
-        for _ in range(30):  # 60 ثانية انتظار للكود
+        for _ in range(30):
             await asyncio.sleep(2)
             async for msg in worker_client.get_chat_history("TempMail_org_bot", limit=5):
                 if msg.id > last_msg_id and msg.text:
@@ -3810,109 +3824,90 @@ async def wait_for_email_code(worker_client, last_msg_id):
         return None
 
 # ==========================================
-# ⚙️ العامل (Worker Engine) - الإصدار المصحح
-# ==========================================
-# ==========================================
-# ⚙️ العامل (Worker Engine) - نفس كودك القديم + تصحيح الستيب
+# ⚙️ العامل (Worker Engine) - هجين (Pyrogram + Telethon)
 # ==========================================
 async def email_changer_worker(worker_session, worker_targets, status_data, worker_idx):
     worker_client = None
     try:
+        # العامل يشتغل بايروجرام عشان يجلب الإيميل بسرعة
         worker_client = Client(f"wk_{worker_idx}_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=worker_session, in_memory=True)
         await worker_client.connect()
         logging.info(f"✅ عامل #{worker_idx} متصل وجاهز.")
         status_data['log'].append(f"✅ عامل #{worker_idx} متصل وجاهز.")
     except Exception as e:
-        logging.error(f"❌ مراقب [worker_connect]: {e}\n{traceback.format_exc()}")
+        logging.error(f"❌ worker_connect: {e}\n{traceback.format_exc()}")
         status_data['log'].append("❌ فشل اتصال عامل.")
         return
 
     for target_data in worker_targets:
         target_client = None
         try:
-            # ✅ رجعناها مثل كودك القديم بالضبط (3 عناصر)
             target_id, target_phone, target_session = target_data
 
             logging.info(f"⏳ جاري معالجة الحساب: {target_phone}")
             status_data['log'].append(f"⏳ جاري معالجة {target_phone}...")
 
-            # 1. جلب الإيميل
+            # 1. جلب الإيميل (بواسطة بايروجرام)
             new_email, last_msg_id = await fetch_temp_mail(worker_client)
             if not new_email:
                 raise Exception("فشل جلب إيميل من بوت TempMail")
 
-            # 2. الاتصال بحساب الهدف
+            # 2. الاتصال بحساب الهدف (بواسطة تليثون - مطابق لسكربتك)
             logging.info(f"ℹ️ جاري الاتصال بحساب الهدف: {target_phone}")
-            target_client = Client(f"tg_{target_id}_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=target_session, in_memory=True)
+            target_client = TelethonClient(StringSession(target_session), API_ID, API_HASH)
             await target_client.connect()
+            
+            if not await target_client.is_user_authorized():
+                raise Exception("فشل تسجيل الدخول بحساب الهدف (جلسة منتهية)")
+                
             logging.info(f"✅ تم الاتصال بحساب الهدف: {target_phone}")
 
-            # 3. إرسال طلب الكود (Change) ومحاولة (Setup) إذا مايدعم التغيير
-            purpose_used = None
-            try:
-                logging.info(f"ℹ️ إرسال طلب SendVerifyEmailCode (Change) للرقم {target_phone} بالإيميل {new_email}...")
-                await target_client.invoke(SendVerifyEmailCode(
-                    email=new_email, 
-                    purpose=EmailVerifyPurposeLoginChange()
-                ))
-                purpose_used = EmailVerifyPurposeLoginChange()
-                logging.info(f"✅ تم إرسال الطلب (Change) بنجاح لـ {target_phone}")
+            # 3. إرسال طلب الكود (تليثون - نفس أوامر سكربتك)
+            logging.info(f"ℹ️ إرسال طلب SendVerifyEmailCode للرقم {target_phone} بالإيميل {new_email}...")
+            await target_client(SendVerifyEmailCodeRequest(
+                purpose=TelethonChange(),
+                email=new_email
+            ))
+            logging.info(f"✅ تم إرسال الطلب بنجاح لـ {target_phone}")
 
-            except RPCError as e:
-                # 🎯 الحل: إذا الحساب مايدعم التغيير، نجلب إيميل جديد وننسئله غصب
-                if "EMAIL_NOT_SETUP" in str(e) or "email_not_setup" in str(e).lower():
-                    logging.info(f"ℹ️ {target_phone}: الحساب لا يدعم التغيير، سيتم جلب إيميل جديد وإرسال (Setup)...")
-                    status_data['log'].append(f"ℹ️ {target_phone}: لا يدعم التغيير، إعداد جديد...")
-                    
-                    # 💡 جلب إيميل جديد تماماً لأن القديم تم استهلاكه في المحاولة الأولى
-                    new_email, last_msg_id = await fetch_temp_mail(worker_client)
-                    if not new_email:
-                        raise Exception("فشل جلب إيميل جديد لعملية الإعداد")
-                    
-                    await target_client.invoke(SendVerifyEmailCode(
-                        email=new_email, 
-                        purpose=EmailVerifyPurposeLoginSetup()
-                    ))
-                    purpose_used = EmailVerifyPurposeLoginSetup()
-                    logging.info(f"✅ تم إرسال الطلب (Setup) بنجاح وإجبار الحساب لـ {target_phone}")
-                else:
-                    raise
-
-            # 4. انتظار الكود
+            # 4. انتظار الكود (بواسطة بايروجرام)
             logging.info(f"ℹ️ جاري انتظار الكود للرقم {target_phone}...")
             code = await wait_for_email_code(worker_client, last_msg_id)
             if not code:
                 raise Exception("لم يصل الكود من الإيميل خلال الوقت المحدد")
 
-            # 5. تأكيد الكود بناءً على الطلب الذي تم إرساله
+            # 5. تأكيد الكود (تليثون)
             logging.info(f"ℹ️ جاري تأكيد الكود {code} للرقم {target_phone}...")
-            await target_client.invoke(VerifyEmail(
-                purpose=purpose_used,
-                verification=EmailVerificationCode(code=code)
+            await target_client(VerifyEmailRequest(
+                purpose=TelethonChange(),
+                verification=TelethonCode(code=code)
             ))
 
             logging.info(f"🎉 نجاح! {target_phone}: تم التغيير لـ {new_email}")
             status_data['success'] += 1
             status_data['log'].append(f"✅ {target_phone}: تم التغيير لـ `{new_email}`")
 
-        except FloodWait as e:
-            logging.error(f"❌ مراقب [FloodWait] لـ {target_phone}: {e.value}s\n{traceback.format_exc()}")
+        except TelethonFloodWait as e:
+            logging.error(f"❌ FloodWait لـ {target_phone}: {e.seconds}s\n{traceback.format_exc()}")
             status_data['failed'] += 1
-            status_data['log'].append(f"❌ {target_phone}: محظور ({e.value}s)")
+            status_data['log'].append(f"❌ {target_phone}: محظور ({e.seconds}s)")
 
-        except RPCError as e:
-            logging.error(f"❌ مراقب [RPCError] لـ {target_phone}: {e}\n{traceback.format_exc()}")
+        except TelethonRPCError as e:
+            logging.error(f"❌ RPCError لـ {target_phone}: {e}\n{traceback.format_exc()}")
             status_data['failed'] += 1
             status_data['log'].append(f"❌ {target_phone}: خطأ تيليجرام: {str(e)[:80]}")
 
         except Exception as e:
-            logging.error(f"❌ مراقب [عام] لـ {target_phone}: {e}\n{traceback.format_exc()}")
+            logging.error(f"❌ خطأ عام لـ {target_phone}: {e}\n{traceback.format_exc()}")
             status_data['failed'] += 1
             status_data['log'].append(f"❌ {target_phone}: {str(e)[:50]}")
 
         finally:
-            if target_client and target_client.is_connected:
-                await target_client.disconnect()
+            if target_client:
+                try:
+                    await target_client.disconnect()
+                except:
+                    pass
 
     if worker_client and worker_client.is_connected:
         await worker_client.disconnect()
@@ -3920,9 +3915,8 @@ async def email_changer_worker(worker_session, worker_targets, status_data, work
     logging.info(f"⚠️ انتهى عمل عامل #{worker_idx}.")
     status_data['log'].append(f"⚠️ انتهى عامل #{worker_idx}.")
 
-
 # ==========================================
-# 📊 واجهة التقدم المباشر (كما هي)
+# 📊 واجهة التقدم المباشر
 # ==========================================
 async def live_progress_updater(chat_id, msg_id, status_data):
     last_text = ""
@@ -3957,7 +3951,6 @@ async def live_progress_updater(chat_id, msg_id, status_data):
         except Exception as e:
             logging.error(f"Error in live_progress_updater: {e}")
 
-
 # ==========================================
 # 🟢 دالة التشغيل الرئيسية (تصحيح العمال وتوزيع الأهداف)
 # ==========================================
@@ -3979,20 +3972,16 @@ async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
         for i, target in enumerate(targets):
             target_session = target[4]
             assigned = False
-            # نقوم بتوزيع الأهداف على العمال بالتناوب مع تخطي العامل إذا كان هو الهدف نفسه
             for offset in range(1, len(worker_sessions) + 1):
                 w_idx = (i + offset) % len(worker_sessions)
                 w_session = worker_sessions[w_idx]
                 if w_session != target_session:
-                    # ✅ نمرر 3 عناصر فقط ليتوقعها الكود القديم
                     worker_assignments[w_idx].append((target[0], target[1], target[4]))
                     assigned = True
                     break
-            
             if not assigned:
                 worker_assignments[0].append((target[0], target[1], target[4]))
 
-        # تشغيل العمال الذين لديهم أهداف
         worker_tasks = []
         for idx, w_session in enumerate(worker_sessions):
             if worker_assignments[idx]:
@@ -4021,14 +4010,6 @@ async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
 
     except Exception as e:
         logging.error(f"Error in run_email_automation: {e}\n{traceback.format_exc()}")
-
-
-
-
-
-
-
-
 
 
 
