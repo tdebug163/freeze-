@@ -3812,92 +3812,79 @@ async def wait_for_email_code(worker_client, last_msg_id):
 # ==========================================
 # ⚙️ العامل (Worker Engine) - الإصدار المصحح
 # ==========================================
+# ==========================================
+# ⚙️ العامل (Worker Engine) - نفس كودك القديم + تصحيح الستيب
+# ==========================================
 async def email_changer_worker(worker_session, worker_targets, status_data, worker_idx):
     worker_client = None
-    target_client = None
     try:
-        worker_client = Client(
-            f"wk_{worker_idx}_{int(time.time()*1000)}",
-            api_id=API_ID, api_hash=API_HASH,
-            session_string=worker_session, in_memory=True
-        )
+        worker_client = Client(f"wk_{worker_idx}_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=worker_session, in_memory=True)
         await worker_client.connect()
         logging.info(f"✅ عامل #{worker_idx} متصل وجاهز.")
         status_data['log'].append(f"✅ عامل #{worker_idx} متصل وجاهز.")
     except Exception as e:
-        logging.error(f"❌ worker_connect: {e}\n{traceback.format_exc()}")
-        status_data['log'].append(f"❌ فشل اتصال عامل #{worker_idx}.")
-        status_data['failed'] += len(worker_targets)
+        logging.error(f"❌ مراقب [worker_connect]: {e}\n{traceback.format_exc()}")
+        status_data['log'].append("❌ فشل اتصال عامل.")
         return
 
     for target_data in worker_targets:
-        # 🎯 التصحيح هنا: قراءة العناصر بالـ index لأن الدالة ترجع 5 عناصر
-        target_id = target_data[0]
-        target_phone = target_data[1]
-        target_session = target_data[4]
-        
+        target_client = None
         try:
+            # ✅ رجعناها مثل كودك القديم بالضبط (3 عناصر)
+            target_id, target_phone, target_session = target_data
+
             logging.info(f"⏳ جاري معالجة الحساب: {target_phone}")
             status_data['log'].append(f"⏳ جاري معالجة {target_phone}...")
 
-            # 1️⃣ جلب الإيميل المؤقت
+            # 1. جلب الإيميل
             new_email, last_msg_id = await fetch_temp_mail(worker_client)
             if not new_email:
-                raise Exception("فشل جلب إيميل مؤقت من TempMail")
+                raise Exception("فشل جلب إيميل من بوت TempMail")
 
-            # 2️⃣ الاتصال بحساب الهدف
+            # 2. الاتصال بحساب الهدف
             logging.info(f"ℹ️ جاري الاتصال بحساب الهدف: {target_phone}")
-            target_client = Client(
-                f"tg_{target_id}_{int(time.time()*1000)}",
-                api_id=API_ID, api_hash=API_HASH,
-                session_string=target_session, in_memory=True
-            )
+            target_client = Client(f"tg_{target_id}_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=target_session, in_memory=True)
             await target_client.connect()
-            
-            if not await target_client.is_user_authorized():
-                raise Exception("فشل تسجيل الدخول بحساب الهدف (جلسة منتهية)")
-
             logging.info(f"✅ تم الاتصال بحساب الهدف: {target_phone}")
 
-            # 3️⃣ إرسال طلب الكود (مطابق لسكريبتك مع إجبار الإعداد إن لزم الأمر)
+            # 3. إرسال طلب الكود (Change) ومحاولة (Setup) إذا مايدعم التغيير
             purpose_used = None
             try:
-                logging.info(f"📤 إرسال SendVerifyEmailCode (Change) لـ {target_phone} بالإيميل {new_email}...")
+                logging.info(f"ℹ️ إرسال طلب SendVerifyEmailCode (Change) للرقم {target_phone} بالإيميل {new_email}...")
                 await target_client.invoke(SendVerifyEmailCode(
-                    email=new_email,
+                    email=new_email, 
                     purpose=EmailVerifyPurposeLoginChange()
                 ))
                 purpose_used = EmailVerifyPurposeLoginChange()
                 logging.info(f"✅ تم إرسال الطلب (Change) بنجاح لـ {target_phone}")
+
             except RPCError as e:
-                # 🎯 الحل الجذري: إجبار الحسابات التي لاتدعم التغيير على الإعداد (Setup)
+                # 🎯 الحل: إذا الحساب مايدعم التغيير، نجلب إيميل جديد وننسئله غصب
                 if "EMAIL_NOT_SETUP" in str(e) or "email_not_setup" in str(e).lower():
-                    logging.info(f"ℹ️ {target_phone}: الحساب لا يدعم التغيير، سيتم جلب إيميل جديد وإجباره على الإعداد (Setup)...")
-                    status_data['log'].append(f"ℹ️ {target_phone}: لا يدعم التغيير، جلب إيميل جديد وإجبار الإعداد...")
+                    logging.info(f"ℹ️ {target_phone}: الحساب لا يدعم التغيير، سيتم جلب إيميل جديد وإرسال (Setup)...")
+                    status_data['log'].append(f"ℹ️ {target_phone}: لا يدعم التغيير، إعداد جديد...")
                     
-                    # 💡 طلب إيميل جديد تماماً لأن القديم تم استهلاكه
-                    new_email_setup, last_msg_id_setup = await fetch_temp_mail(worker_client)
-                    if not new_email_setup:
-                        raise Exception("فشل جلب إيميل جديد لعملية الإعداد (Setup)")
+                    # 💡 جلب إيميل جديد تماماً لأن القديم تم استهلاكه في المحاولة الأولى
+                    new_email, last_msg_id = await fetch_temp_mail(worker_client)
+                    if not new_email:
+                        raise Exception("فشل جلب إيميل جديد لعملية الإعداد")
                     
                     await target_client.invoke(SendVerifyEmailCode(
-                        email=new_email_setup,
+                        email=new_email, 
                         purpose=EmailVerifyPurposeLoginSetup()
                     ))
                     purpose_used = EmailVerifyPurposeLoginSetup()
-                    new_email = new_email_setup  # تحديث الإيميل للمتابعة
-                    last_msg_id = last_msg_id_setup
                     logging.info(f"✅ تم إرسال الطلب (Setup) بنجاح وإجبار الحساب لـ {target_phone}")
                 else:
-                    raise  # إذا كان الخطأ ليس EMAIL_NOT_SETUP، نرفعه للـ except الخارجي
+                    raise
 
-            # 4️⃣ انتظار وصول الكود
+            # 4. انتظار الكود
             logging.info(f"ℹ️ جاري انتظار الكود للرقم {target_phone}...")
             code = await wait_for_email_code(worker_client, last_msg_id)
             if not code:
                 raise Exception("لم يصل الكود من الإيميل خلال الوقت المحدد")
 
-            # 5️⃣ تأكيد الكود (بناءً على نفس الـ purpose الذي تم إرساله)
+            # 5. تأكيد الكود بناءً على الطلب الذي تم إرساله
             logging.info(f"ℹ️ جاري تأكيد الكود {code} للرقم {target_phone}...")
             await target_client.invoke(VerifyEmail(
                 purpose=purpose_used,
@@ -3909,44 +3896,33 @@ async def email_changer_worker(worker_session, worker_targets, status_data, work
             status_data['log'].append(f"✅ {target_phone}: تم التغيير لـ `{new_email}`")
 
         except FloodWait as e:
-            logging.error(f"❌ FloodWait لـ {target_phone}: {e.value}s\n{traceback.format_exc()}")
+            logging.error(f"❌ مراقب [FloodWait] لـ {target_phone}: {e.value}s\n{traceback.format_exc()}")
             status_data['failed'] += 1
             status_data['log'].append(f"❌ {target_phone}: محظور ({e.value}s)")
 
         except RPCError as e:
-            logging.error(f"❌ RPCError لـ {target_phone}: {e}\n{traceback.format_exc()}")
+            logging.error(f"❌ مراقب [RPCError] لـ {target_phone}: {e}\n{traceback.format_exc()}")
             status_data['failed'] += 1
             status_data['log'].append(f"❌ {target_phone}: خطأ تيليجرام: {str(e)[:80]}")
 
         except Exception as e:
-            logging.error(f"❌ خطأ عام لـ {target_phone}: {e}\n{traceback.format_exc()}")
+            logging.error(f"❌ مراقب [عام] لـ {target_phone}: {e}\n{traceback.format_exc()}")
             status_data['failed'] += 1
             status_data['log'].append(f"❌ {target_phone}: {str(e)[:50]}")
 
         finally:
             if target_client and target_client.is_connected:
-                try:
-                    await target_client.disconnect()
-                except:
-                    pass
-            target_client = None
+                await target_client.disconnect()
 
     if worker_client and worker_client.is_connected:
-        try:
-            await worker_client.disconnect()
-        except:
-            pass
+        await worker_client.disconnect()
 
     logging.info(f"⚠️ انتهى عمل عامل #{worker_idx}.")
     status_data['log'].append(f"⚠️ انتهى عامل #{worker_idx}.")
-   
-  
- 
-
 
 
 # ==========================================
-# 📊 واجهة التقدم المباشر
+# 📊 واجهة التقدم المباشر (كما هي)
 # ==========================================
 async def live_progress_updater(chat_id, msg_id, status_data):
     last_text = ""
@@ -3981,8 +3957,9 @@ async def live_progress_updater(chat_id, msg_id, status_data):
         except Exception as e:
             logging.error(f"Error in live_progress_updater: {e}")
 
+
 # ==========================================
-# 🟢 دالة التشغيل الرئيسية - مع التعيين الذكي
+# 🟢 دالة التشغيل الرئيسية (تصحيح العمال وتوزيع الأهداف)
 # ==========================================
 async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
     try:
@@ -4002,30 +3979,24 @@ async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
         for i, target in enumerate(targets):
             target_session = target[4]
             assigned = False
-            # round-robin مع تخطي النفس
+            # نقوم بتوزيع الأهداف على العمال بالتناوب مع تخطي العامل إذا كان هو الهدف نفسه
             for offset in range(1, len(worker_sessions) + 1):
                 w_idx = (i + offset) % len(worker_sessions)
                 w_session = worker_sessions[w_idx]
                 if w_session != target_session:
-                    worker_assignments[w_idx].append(target)
+                    # ✅ نمرر 3 عناصر فقط ليتوقعها الكود القديم
+                    worker_assignments[w_idx].append((target[0], target[1], target[4]))
                     assigned = True
                     break
+            
             if not assigned:
-                # كل العمال هم نفس الهدف (نادر جداً) - نضطر لإسناده للعامل الافتراضي
-                logging.warning(f"⚠️ لا يوجد عامل غير الهدف لـ {target[1]}، سيتم إسناده للعامل الافتراضي.")
-                worker_assignments[0].append(target)
+                worker_assignments[0].append((target[0], target[1], target[4]))
 
-        # طباعة توزيع المهام للمراقبة
-        for idx, assignments in worker_assignments.items():
-            logging.info(f"📋 عامل #{idx}: مسؤول عن {len(assignments)} حساب")
-
-        # تشغيل العمال الذين لديهم أهداف فقط
+        # تشغيل العمال الذين لديهم أهداف
         worker_tasks = []
         for idx, w_session in enumerate(worker_sessions):
             if worker_assignments[idx]:
-                task = asyncio.create_task(
-                    email_changer_worker(w_session, worker_assignments[idx], status_data, idx)
-                )
+                task = asyncio.create_task(email_changer_worker(w_session, worker_assignments[idx], status_data, idx))
                 worker_tasks.append(task)
 
         if worker_tasks:
@@ -4050,9 +4021,6 @@ async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
 
     except Exception as e:
         logging.error(f"Error in run_email_automation: {e}\n{traceback.format_exc()}")
-        status_data['done'] = True
-
-
 
 
 
