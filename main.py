@@ -421,6 +421,9 @@ async def lzt_get_usd_balance():
                     return -1.0, -1.0
     except:
         return 0.0, 0.0
+       
+      
+      
 
 async def process_lzt_purchase(admin_id, result, price, task_name="شراء يدوي"):
     try:
@@ -438,7 +441,8 @@ async def process_lzt_purchase(admin_id, result, price, task_name="شراء يد
         phone = f"+{me.phone_number}" if me.phone_number else "Unknown"
         name = me.first_name or "User"
 
-        save_hex_account(admin_id, phone, me.id, name, pyro_sess, tl_sess, "LZT", hex_key, dc_id)
+        # هنا نستقبل acc_id من قاعدة البيانات لتمريره لدالة التجديد لاحقاً
+        acc_id = save_hex_account(admin_id, phone, me.id, name, pyro_sess, tl_sess, "LZT", hex_key, dc_id)
 
         msg_text = (
             f"🎣┊ **تـم صـيـد حـسـاب جـديـد بـنـجـاح!**\n\n"
@@ -451,6 +455,48 @@ async def process_lzt_purchase(admin_id, result, price, task_name="شراء يد
             f"✅┊ تـم تـسـجـيـل الـجـلـسـة فـي قـاعـدة الـبـيـانـات بـنـجـاح."
         )
         bot.send_message(admin_id, msg_text, parse_mode="Markdown")
+
+        # ========================================================
+        # 🚀 إضافة التجديد التلقائي في الخلفية (نفس نظام التجديد اليدوي)
+        # ========================================================
+        async def auto_renew_task():
+            try:
+                # رسالة مبدئية بأن التجديد بدأ
+                renew_start_msg = bot.send_message(
+                    admin_id, 
+                    f"⏳ **جـاري تـجـديـد جـلـسـة الـحـسـاب الـمـشـتـرى تـلـقـائـيـاً...**\n⎉╎ الـرقـم: `{phone}`", 
+                    parse_mode="Markdown"
+                )
+                
+                # استدعاء دالة التجديد الأساسية والمحصنة الموجودة في ملفك
+                success, error_text, raw_session = await renew_single_session(acc_id, phone, name, pyro_sess)
+                
+                # طباعة كليشة التجديد المعتادة
+                if success:
+                    summary = (
+                        f"🛂┊ **تـم تـجـهـيـز الـجـلـسـات وتـأمـيـنـهـا !**\n\n"
+                        f"⎉╎ الـنـجـاح: `1`\n"
+                        f"⎉╎ الـفـشـل: `0`\n\n"
+                    )
+                    bot.edit_message_text(summary, chat_id=admin_id, message_id=renew_start_msg.message_id, parse_mode="Markdown")
+                    
+                    # إرسال السشن الخام كرسالة منفصلة
+                    bot.send_message(admin_id, raw_session)
+                else:
+                    summary = (
+                        f"🛂┊ **تـم تـجـهـيـز الـجـلـسـات وتـأمـيـنـهـا !**\n\n"
+                        f"⎉╎ الـنـجـاح: `0`\n"
+                        f"⎉╎ الـفـشـل: `1`\n\n"
+                        f"•❐• **تـفـاصـيـل الأخـطـاء:**\n{error_text}"
+                    )
+                    bot.edit_message_text(summary, chat_id=admin_id, message_id=renew_start_msg.message_id, parse_mode="Markdown")
+            except Exception as e:
+                pass # تجاهل الأخطاء العابرة لكي لا يتوقف البوت
+
+        # تشغيل التجديد في الخلفية لكي لا يعطل القناص عن صيد حسابات أخرى
+        asyncio.create_task(auto_renew_task())
+        # ========================================================
+
         return True
     except Exception as e:
         bot.send_message(admin_id, f"⚠️┊ تـم الـشـراء بـنـجـاح ولـكـن فـشـل تـسـجـيـلـه بـالـبـوت:\n`{e}`", parse_mode="Markdown")
@@ -2118,10 +2164,10 @@ def renew_manage_menu(call):
 
 async def renew_single_session(acc_id, phone, name, pyro_session):
     """المحرك الفعلي لتجديد الجلسة"""
-    
+
     # تأخير بسيط جداً لمنع تزامن الطلبات في نفس الجزء من الثانية
     await asyncio.sleep(random.uniform(0.1, 1.5))
-    
+
     # Client A (القديم): يجب أن يستلم التحديثات ليقرأ الكود فوراً
     client_a = Client(f"old_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
     # Client B (الجديد): مجرد تسجيل دخول، لا نحتاج تحديثات (يخفف الضغط)
@@ -2134,11 +2180,11 @@ async def renew_single_session(acc_id, phone, name, pyro_session):
 
         # توقيت الطلب (مع خصم 15 ثانية لاختلاف توقيت سيرفرات تليجرام)
         request_time = time.time() - 15
-        
+
         sent_code = await client_b.send_code(phone)
 
         valid_codes = [] 
-        
+
         for _ in range(6): # البحث لمدة 18 ثانية
             await asyncio.sleep(3)
             try:
@@ -2152,7 +2198,7 @@ async def renew_single_session(acc_id, phone, name, pyro_session):
                                     valid_codes.append((code, msg.id))
             except:
                 pass
-            
+
             if valid_codes:
                 break
 
@@ -2164,7 +2210,7 @@ async def renew_single_session(acc_id, phone, name, pyro_session):
 
         logged_in = False
         msg_to_delete = None
-        
+
         for code, msg_id in valid_codes:
             try:
                 await client_b.sign_in(phone, sent_code.phone_code_hash, code)
@@ -2186,7 +2232,7 @@ async def renew_single_session(acc_id, phone, name, pyro_session):
         me = await client_b.get_me()
         if not me:
             return False, f"❌ `{phone}`: فـشـل الـتـحـقـق مـن سـلامـة الـجـلـسـة الـجـديـدة.", None
-            
+
         new_session_str = await client_b.export_session_string()
 
         # مسح رسالة الكود من الجلسة القديمة
@@ -2215,7 +2261,7 @@ async def renew_single_session(acc_id, phone, name, pyro_session):
     except Exception as e:
         err_str = str(e) if str(e).strip() else type(e).__name__
         err_str_lower = err_str.lower()
-        
+
         if "flood" in err_str_lower or "fresh" in err_str_lower:
             return False, f"⚠️ `{phone}`: مـحـظـور مـؤقـتـاً مـن طـلـب الأكـواد.", None
         elif "timeout" in err_str_lower:
@@ -2224,9 +2270,9 @@ async def renew_single_session(acc_id, phone, name, pyro_session):
             return False, f"❌ `{phone}`: الـجـلـسـة مـضـروبـة أو مـسـتـخـدمـة بـمـكـان آخـر.", None
         elif "connection" in err_str_lower or "socket" in err_str_lower:
             return False, f"⚠️ `{phone}`: انـقـطـاع مـفـاجـئ بـالـشـبـكـة.", None
-        
+
         return False, f"❌ `{phone}`: {err_str[:35]}", None
-        
+
     finally:
         if client_a.is_connected: 
             try: await client_a.disconnect()
@@ -2247,7 +2293,7 @@ async def execute_renew_all_async(owner_id, chat_id, msg_id, target="all"):
 
     total_accs = len(accounts)
     batch_size = 20 # معالجة 20 حساب بنفس الوقت كحد أقصى
-    
+
     # تقسيم الحسابات إلى دفعات (كل دفعة 20 حساب)
     account_batches = [accounts[i:i + batch_size] for i in range(0, total_accs, batch_size)]
 
@@ -2283,7 +2329,7 @@ async def execute_renew_all_async(owner_id, chat_id, msg_id, target="all"):
                 except: pass
             else:
                 failed_msgs.append(error_text)
-                
+
         # استراحة بسيطة بين الدفعات لإراحة سيرفر تليجرام
         if index < len(account_batches) - 1:
             await asyncio.sleep(2)
@@ -2294,7 +2340,7 @@ async def execute_renew_all_async(owner_id, chat_id, msg_id, target="all"):
         f"⎉╎ الـنـجـاح: `{success_count}`\n"
         f"⎉╎ الـفـشـل: `{len(failed_msgs)}`\n\n"
     )
-    
+
     if failed_msgs:
         summary += "•❐• **تـفـاصـيـل الأخـطـاء:**\n" + "\n".join(failed_msgs)
 
@@ -2673,7 +2719,7 @@ def home_keyboard(uid):
     markup.row(InlineKeyboardButton("• إدارة الـسـبـام بـلـوك 🚫", callback_data="spam_manage"))
     markup.row(InlineKeyboardButton("• تـجـديـد الـجـلـسـات ♻️", callback_data="menu_renew_manage"))
     markup.row(InlineKeyboardButton("• نـظـام الإحـالات 🇺🇲", callback_data="referral_menu"))
-    
+
 
 
     markup.row(InlineKeyboardButton("• إدارة فـحـص الـيـوزرات 🔠", callback_data="usernames_manage"))
@@ -2755,13 +2801,13 @@ def referral_main_markup(uid):
     state = REFERRAL_STATE.get(uid, {})
     is_running = state.get("is_running", False)
     markup = InlineKeyboardMarkup()
-    
+
     if not is_running:
         markup.row(InlineKeyboardButton(f"👑 تـغـيـيـر الـحـسـاب الافـتـراضـي ({master_name})", callback_data="ref_change_master"))
         markup.row(InlineKeyboardButton("🚀 بـدء الـمـرآة والـمـراقـبـة الـشـامـلـة", callback_data="ref_start"))
     else:
         markup.row(InlineKeyboardButton("🛑 إيـقـاف الـمـرآة والـمـراقـبـة", callback_data="ref_stop"))
-        
+
     markup.row(InlineKeyboardButton("🔙 رجـوع لـلـرئـيـسـيـة", callback_data="back_home"))
     return markup
 
@@ -2812,7 +2858,7 @@ async def cleanup_campaign(uid):
     channels = state.get('joined_channels', [])
     bot_target = state.get('current_bot')
     accounts = get_all_accounts(uid)
-    
+
     if not channels and not bot_target: return
     try: bot.edit_message_text("🧹 **جـاري تـنـظـيـف الـحـسـابـات (مـغـادرة الـقـنـوات ومـسـح الـبـوت)...**", state['chat_id'], state['msg_id'], parse_mode="Markdown")
     except: pass
@@ -2903,18 +2949,18 @@ async def raw_click_button(client, bot_username, msg_id, callback_data):
 async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scout=False, known_channels=None):
     """المحرك الذكي: يقرأ، ينضم بالقوة، يضغط الزر، ويتأكد."""
     if known_channels is None: known_channels = []
-    
+
     start_cmd = f"/start {payload}" if payload else "/start"
-    
+
     # ------------------ خوارزمية السرب (التنفيذ السريع) ------------------
     if not is_scout and known_channels:
         for link in known_channels:
             await raw_join_chat(client, link)
             await asyncio.sleep(0.5)
-        
+
         await client.send_message(bot_username, start_cmd)
         await asyncio.sleep(2.5)
-        
+
         clicked = False
         async for msg in client.get_chat_history(bot_username, limit=2):
             if msg.reply_markup and msg.reply_markup.inline_keyboard:
@@ -2926,7 +2972,7 @@ async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scou
                             break
                     if clicked: break
             if clicked: break
-            
+
         await asyncio.sleep(1)
         await client.send_message(bot_username, start_cmd)
         return True, known_channels
@@ -2934,14 +2980,14 @@ async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scou
     # ------------------ خوارزمية الكشاف (الاستكشاف العميق) ------------------
     await client.send_message(bot_username, start_cmd)
     newly_found_channels = []
-    
+
     for step in range(3): 
         if not state.get("is_executing"): break
         await asyncio.sleep(3) 
-        
+
         channels_to_join = []
         callback_to_click = None
-        
+
         async for msg in client.get_chat_history(bot_username, limit=3):
             if msg.reply_markup and msg.reply_markup.inline_keyboard:
                 for row in msg.reply_markup.inline_keyboard:
@@ -2951,33 +2997,33 @@ async def parse_and_join_bot_logic(client, bot_username, payload, state, is_scou
                         elif hasattr(btn, 'callback_data') and btn.callback_data:
                             if not callback_to_click:
                                 callback_to_click = (msg.id, btn.callback_data)
-                                
+
             if msg.text:
                 text_links = re.findall(r'(https?://(?:t\.me|telegram\.me)/[a-zA-Z0-9_+/-]+)', msg.text)
                 channels_to_join.extend(text_links)
-                
+
         channels_to_join = list(set(channels_to_join))
-        
+
         if not channels_to_join and not callback_to_click: break
-            
+
         joined_any = False
         for link in channels_to_join:
             if link not in state['joined_channels']: 
                 state['joined_channels'].append(link)
                 newly_found_channels.append(link)
-                
+
             success_join = await raw_join_chat(client, link)
             if success_join: joined_any = True
             await asyncio.sleep(0.5)
-            
+
         if callback_to_click:
             await raw_click_button(client, bot_username, callback_to_click[0], callback_to_click[1])
             await asyncio.sleep(1.5)
-                
+
         await client.send_message(bot_username, start_cmd)
-        
+
         if not joined_any and not callback_to_click: break
-            
+
     return True, newly_found_channels
 
 async def worker_bot_executor(acc_id, pyro_session, bot_username, app_name, payload_type, payload, state, is_scout=False, known_channels=None):
@@ -2985,7 +3031,7 @@ async def worker_bot_executor(acc_id, pyro_session, bot_username, app_name, payl
         client = Client(f"smart_{acc_id}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
         try:
             await asyncio.wait_for(client.connect(), timeout=10)
-            
+
             if payload_type == "startapp":
                 await client.send_message(bot_username, f"/start {payload}" if payload else "/start")
                 try:
@@ -2998,12 +3044,12 @@ async def worker_bot_executor(acc_id, pyro_session, bot_username, app_name, payl
                 await asyncio.sleep(4)
                 state['completed'] += 1
                 return True, []
-                
+
             else:
                 success, found_channels = await parse_and_join_bot_logic(client, bot_username, payload, state, is_scout, known_channels)
                 if success: state['completed'] += 1
                 return success, found_channels
-                
+
         except Exception as e:
             print(f"Error in worker {acc_id}: {e}")
             return False, []
@@ -3014,18 +3060,18 @@ async def execute_smart_campaign(uid, target_count, bot_username, app_name, payl
     state = REFERRAL_STATE[uid]
     accounts = get_all_accounts(uid)
     if target_count and target_count < len(accounts): accounts = accounts[:target_count]
-        
+
     if not accounts: return
-    
+
     state['total'] = len(accounts)
     state['completed'] = 0
     state['is_executing'] = True
     state['current_bot'] = bot_username
     if 'joined_channels' not in state: state['joined_channels'] = []
-    
+
     scout_acc = accounts[0]
     swarm_accs = accounts[1:]
-    
+
     scout_text = (f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n🕵️‍♂️ **جـاري الاسـتـكـشـاف:**\n⎉╎ يـقـوم حـسـاب الـكـشـاف بـفـحـص الانـلايـن وقـنـوات الاشـتـراك لـ `@{bot_username}`...")
     try: bot.edit_message_text(scout_text, state['chat_id'], state['msg_id'], reply_markup=referral_main_markup(uid), parse_mode="Markdown")
     except: pass
@@ -3034,9 +3080,9 @@ async def execute_smart_campaign(uid, target_count, bot_username, app_name, payl
         except: pass
 
     _, known_channels = await worker_bot_executor(scout_acc[0], scout_acc[4], bot_username, app_name, payload_type, payload, state, is_scout=True)
-    
+
     if not state.get("is_executing"): return
-    
+
     swarm_text = (f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n🚀 **بـدأ هـجـوم الـسـرب:**\n⎉╎ الـقـنـوات الـمـكـتـشـفـة: `{len(known_channels)}`\n⏳ جـاري دخـول `{len(swarm_accs)}` حـسـاب فـي نـفـس الـلـحـظـة...")
     try: bot.edit_message_text(swarm_text, state['chat_id'], state['msg_id'], reply_markup=referral_main_markup(uid), parse_mode="Markdown")
     except: pass
@@ -3046,7 +3092,7 @@ async def execute_smart_campaign(uid, target_count, bot_username, app_name, payl
 
     if swarm_accs:
         await asyncio.gather(*[worker_bot_executor(acc[0], acc[4], bot_username, app_name, payload_type, payload, state, is_scout=False, known_channels=known_channels) for acc in swarm_accs])
-    
+
     if state.get("is_executing"):
         state["is_executing"] = False
         final_text = (f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n✅ **تـمـت الـمـهـمـة بـنـجـاح.**\n⎉╎ الـحـسـابـات الـتـي دخـلـت: `{state['completed']}` مـن أصـل `{len(accounts)}`\n\n•❐• اكـتـب `done` لـلـتـنـظـيـف (مـسـح الـبـوت ومـغـادرة الـقـنـوات).")
@@ -3064,12 +3110,12 @@ def extract_peer_id(peer):
 
 async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
     master_client = Client(f"daemon_{uid}_{int(time.time())}", api_id=API_ID, api_hash=API_HASH, session_string=pyro_session, in_memory=True)
-    
+
     @master_client.on_message()
     async def master_message_handler(client, message):
         state = REFERRAL_STATE.get(uid)
         if not state or not state.get("is_running"): return
-        
+
         if message.from_user and message.from_user.id == client.me.id:
             if message.chat.id == client.me.id:
                 text = message.text.lower() if message.text else ""
@@ -3078,12 +3124,12 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
                     await cleanup_campaign(uid)
                     status_txt = "بـنـجـاح" if text == "done" else "بـفـشـل"
                     msg_text = f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n✅ **تـم إنـهـاء الـمـهـمـة {status_txt} وتـنـظـيـف الـحـسـابـات!** 🧹\n⎉╎ نـجـح: `{state.get('completed', 0)}`"
-                    
+
                     try: await message.edit_text(msg_text)
                     except: pass
                     try: bot.edit_message_text(msg_text, state['chat_id'], state['msg_id'], reply_markup=referral_main_markup(uid), parse_mode="Markdown")
                     except: pass
-                
+
                 elif text.startswith(".do ") or text == ".do":
                     if state.get("is_executing"): state["is_executing"] = False; await asyncio.sleep(1)
                     parts = message.text.split(maxsplit=2)
@@ -3095,7 +3141,7 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
                             if len(parts) >= 3: url = parts[2]
                         else:
                             url = parts[1]
-                            
+
                     if url:
                         match = re.search(r'(?:https?://)?(?:t\.me|telegram\.me)/([^/\?\s]+)(?:/([^/\?\s]+))?(?:\?(start|startapp)=([^&\s]+))?', url, re.IGNORECASE)
                         if match:
@@ -3103,13 +3149,13 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
                             app_name = match.group(2)
                             payload_type = match.group(3).lower() if match.group(3) else "start"
                             payload = match.group(4) if match.group(4) else ""
-                            
+
                             exec_msg = f"🛂┊ **نـظـام الإحـالات 🇺🇲**\n\n⏳ **جـاري تـجـهـيـز الـخـوارزمـيـة...**\n⎉╎ الـهـدف: `@{bot_username}`\n⎉╎ الـعـدد: `{target_count if target_count else 'الـكـل'}`"
                             try: await message.edit_text(exec_msg)
                             except: pass
-                            
+
                             asyncio.create_task(execute_smart_campaign(uid, target_count, bot_username, app_name, payload_type, payload, message))
-            
+
             else:
                 if message.text:
                     asyncio.create_task(mirror_action(uid, "send_msg", chat_id=message.chat.id, text=message.text))
@@ -3135,22 +3181,22 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
     async def raw_update_handler(client, update, users, chats):
         state = REFERRAL_STATE.get(uid)
         if not state or not state.get("is_running"): return
-        
+
         if isinstance(update, types.UpdatePeerBlocked):
             peer_id = extract_peer_id(update.peer_id)
             if peer_id:
                 action = "block" if update.blocked else "unblock"
                 asyncio.create_task(mirror_action(uid, action, peer_id=peer_id))
-                
+
         elif isinstance(update, types.UpdateDeleteHistory):
             peer_id = extract_peer_id(update.peer)
             if peer_id: asyncio.create_task(mirror_action(uid, "del_history", peer_id=peer_id))
-            
+
         elif getattr(update, "QUALNAME", "") == "types.UpdateMessageReactions":
             try:
                 peer_id = extract_peer_id(update.peer)
                 msg_id = update.msg_id
-                
+
                 msg = await client.get_messages(peer_id, msg_id)
                 if msg and msg.reactions and msg.reactions.reactions:
                     chosen_emoji = None
@@ -3167,21 +3213,21 @@ async def master_account_daemon(uid, pyro_session, chat_id, msg_id):
         me = await master_client.get_me()
         if not me: raise EOFError("Unauthorized")
         await master_client.disconnect()
-        
+
         await master_client.start()
         while REFERRAL_STATE.get(uid, {}).get("is_running"): await asyncio.sleep(2)
-            
+
     except EOFError:
         err_msg = "❌ **فـشـل بـدء الـمـراقـبـة:**\nالـجـلـسـة الافـتـراضـيـة مـنـتـهـيـة أو تـالـفـة، يـرجـى تـغـيـيـرهـا مـن الـقـائـمـة."
         try: bot.send_message(chat_id, err_msg, parse_mode="Markdown")
         except: pass
         if uid in REFERRAL_STATE: REFERRAL_STATE[uid]["is_running"] = False
-        
+
     except Exception as e:
         try: bot.send_message(chat_id, f"❌ **تـوقـفـت الـمـراقـبـة بـسـبـب خـطـأ:**\n`{str(e)}`", parse_mode="Markdown")
         except: pass
         if uid in REFERRAL_STATE: REFERRAL_STATE[uid]["is_running"] = False
-        
+
     finally:
         if master_client.is_connected: 
             try: await master_client.stop()
@@ -3195,9 +3241,9 @@ def ref_start_action(call):
     if not is_allowed(uid): return
     master = get_master_account(uid)
     if not master: return bot.answer_callback_query(call.id, "❌ حـدث خـطـأ!", show_alert=True)
-        
+
     REFERRAL_STATE[uid] = { "is_running": True, "is_executing": False, "chat_id": call.message.chat.id, "msg_id": call.message.message_id, "completed": 0, "total": 0, "joined_channels": [], "current_bot": None }
-    
+
     text = "🛂┊ **نـظـام الإحـالات والـمـرآة الـشـامـلـة 🇺🇲**\n\n•❐• انـا أُراقـبـك الآن، أي تـفـاعـل/شـات/جـروب/مـسـح يـتـم تـقـلـيـده! 🪞\n⎉╎ أرسـل `.do` مـع الـرابـط فـي الـمـحـفـوظـات لـبـدء مـهـمـة."
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=referral_main_markup(uid), parse_mode="Markdown")
     threading.Thread(target=lambda: run_async(master_account_daemon(uid, master[2], call.message.chat.id, call.message.message_id)), daemon=True).start()
@@ -3530,20 +3576,7 @@ start_lockdown_thread()
 
 
 
-
-import asyncio
-import re
-import time
-import traceback
-import threading
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram import Client
-from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
-from pyrogram.raw.types import EmailVerifyPurposeLoginSetup, EmailVerificationCode
-from pyrogram.errors import FloodWait, RPCError
-
-
+#داله الايميل هنا
 
 import asyncio
 import re
@@ -3551,9 +3584,11 @@ import time
 import traceback
 import threading
 import logging
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram import Client
 from pyrogram.raw.functions.account import SendVerifyEmailCode, VerifyEmail
-from pyrogram.raw.types import EmailVerifyPurposeLoginSetup, EmailVerificationCode
+from pyrogram.raw.types import EmailVerifyPurposeLoginChange, EmailVerifyPurposeLoginSetup, EmailVerificationCode
 from pyrogram.errors import FloodWait, RPCError
 
 # متغيرات النظام
@@ -3681,31 +3716,34 @@ def execute_email_change_cb(call):
 
         targets = [accounts_dict[tid] for tid in target_ids if tid in accounts_dict]
 
-        # تحديد العمال
+        # تحديد العمال (نجمع كل العمال المتاحين)
         if uid not in USER_WORKERS:
             USER_WORKERS[uid] = set()
 
         worker_sessions = [DEFAULT_TEMP_MAIL_SESSION]
-        target_sessions = set([acc[4] for acc in targets])
-
         for w_id in USER_WORKERS[uid]:
             if w_id in accounts_dict:
                 w_session = accounts_dict[w_id][4]
-                # منع العامل من تغيير نفسه برمجياً
-                if w_session not in target_sessions:
+                if w_session not in worker_sessions:
                     worker_sessions.append(w_session)
-                else:
-                    logging.warning(f"Worker {w_id} is a target, skipping to prevent self-change.")
-
-        # إزالة التكرارات
-        worker_sessions = list(set(worker_sessions))
 
         if not targets:
             bot.answer_callback_query(call.id, "❌ لا توجد أهداف.", show_alert=True)
             return
 
         if not worker_sessions:
-            bot.answer_callback_query(call.id, "❌ العمال المستخدمون كأهداف لا يمكنهم العمل. أضف عمال آخرين.", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ لا يوجد عمال متاحون.", show_alert=True)
+            return
+
+        # تحقق: على الأقل عامل واحد ليس هدفاً لكي يغيرهم
+        target_sessions = set([t[4] for t in targets])
+        non_target_workers = [ws for ws in worker_sessions if ws not in target_sessions]
+        if not non_target_workers:
+            bot.answer_callback_query(
+                call.id,
+                "⚠️ كل العمال المختارين هم أيضاً أهداف! أضف عاملاً آخر (أو العامل الافتراضي) ليقوم بتغييرهم.",
+                show_alert=True
+            )
             return
 
         bot.answer_callback_query(call.id, "⏳ جاري بدء الهجوم...")
@@ -3726,7 +3764,7 @@ def execute_email_change_cb(call):
         logging.error(f"Error in execute_email_change_cb: {e}\n{traceback.format_exc()}")
 
 # ==========================================
-# 📧 دوال الإيميل المؤقت (مع مراقبة شاملة بالترمنال)
+# 📧 دوال الإيميل المؤقت (جلب الإيميل والكود)
 # ==========================================
 async def fetch_temp_mail(worker_client):
     try:
@@ -3771,63 +3809,96 @@ async def wait_for_email_code(worker_client, last_msg_id):
         logging.error(f"❌ مراقب [wait_for_email_code]: {e}\n{traceback.format_exc()}")
         return None
 
-
-
-
-
 # ==========================================
-# ⚙️ العامل (Worker Engine)
+# ⚙️ العامل (Worker Engine) - النسخة المصححة الكاملة
 # ==========================================
-async def email_changer_worker(worker_session, target_queue, status_data):
+async def email_changer_worker(worker_session, worker_targets, status_data, worker_idx):
     worker_client = None
+    target_client = None
     try:
-        worker_client = Client(f"wk_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=worker_session, in_memory=True)
+        worker_client = Client(
+            f"wk_{worker_idx}_{int(time.time()*1000)}",
+            api_id=API_ID, api_hash=API_HASH,
+            session_string=worker_session, in_memory=True
+        )
         await worker_client.connect()
-        logging.info("✅ عامل (Worker) متصل وجاهز.")
-        status_data['log'].append("✅ عامل (Worker) متصل وجاهز.")
+        logging.info(f"✅ عامل #{worker_idx} متصل وجاهز.")
+        status_data['log'].append(f"✅ عامل #{worker_idx} متصل وجاهز.")
     except Exception as e:
-        logging.error(f"❌ مراقب [worker_connect]: {e}\n{traceback.format_exc()}")
-        status_data['log'].append("❌ فشل اتصال عامل.")
+        logging.error(f"❌ worker_connect: {e}\n{traceback.format_exc()}")
+        status_data['log'].append(f"❌ فشل اتصال عامل #{worker_idx}.")
+        status_data['failed'] += len(worker_targets)
         return
 
-    while not target_queue.empty():
-        target_client = None
+    for target_data in worker_targets:
+        target_phone = target_data[1]
         try:
-            target_data = target_queue.get_nowait()
             target_id, target_phone, target_session = target_data
 
             logging.info(f"⏳ جاري معالجة الحساب: {target_phone}")
             status_data['log'].append(f"⏳ جاري معالجة {target_phone}...")
 
-            # 1. جلب الإيميل
+            # 1️⃣ جلب الإيميل المؤقت
             new_email, last_msg_id = await fetch_temp_mail(worker_client)
             if not new_email:
-                raise Exception("فشل جلب إيميل من بوت TempMail")
+                raise Exception("فشل جلب إيميل مؤقت من TempMail")
 
-            # 2. الاتصال بحساب الهدف
+            # 2️⃣ الاتصال بحساب الهدف
             logging.info(f"ℹ️ جاري الاتصال بحساب الهدف: {target_phone}")
-            target_client = Client(f"tg_{target_id}_{int(time.time()*1000)}", api_id=API_ID, api_hash=API_HASH, session_string=target_session, in_memory=True)
+            target_client = Client(
+                f"tg_{target_id}_{int(time.time()*1000)}",
+                api_id=API_ID, api_hash=API_HASH,
+                session_string=target_session, in_memory=True
+            )
             await target_client.connect()
+            
+            if not await target_client.is_user_authorized():
+                raise Exception("فشل تسجيل الدخول بحساب الهدف (جلسة منتهية)")
+
             logging.info(f"✅ تم الاتصال بحساب الهدف: {target_phone}")
 
-            # 3. إرسال طلب الكود (استخدام EmailVerifyPurposeLoginChange لأن الحساب مسجل دخوله)
-            logging.info(f"ℹ️ إرسال طلب SendVerifyEmailCode للرقم {target_phone} بالإيميل {new_email}...")
-            await target_client.invoke(SendVerifyEmailCode(
-                email=new_email, 
-                purpose=EmailVerifyPurposeLoginChange()  # ✅ التصحيح هنا
-            ))
-            logging.info(f"✅ تم إرسال الطلب بنجاح لـ {target_phone}")
+            # 3️⃣ إرسال طلب الكود (مطابق لسكريبتك مع إجبار الإعداد إن لزم الأمر)
+            purpose_used = None
+            try:
+                logging.info(f"📤 إرسال SendVerifyEmailCode (Change) لـ {target_phone} بالإيميل {new_email}...")
+                await target_client.invoke(SendVerifyEmailCode(
+                    email=new_email,
+                    purpose=EmailVerifyPurposeLoginChange()
+                ))
+                purpose_used = EmailVerifyPurposeLoginChange()
+                logging.info(f"✅ تم إرسال الطلب (Change) بنجاح لـ {target_phone}")
+            except RPCError as e:
+                # 🎯 الحل الجذري: إجبار الحسابات التي لاتدعم التغيير على الإعداد (Setup)
+                if "EMAIL_NOT_SETUP" in str(e) or "email_not_setup" in str(e).lower():
+                    logging.info(f"ℹ️ {target_phone}: الحساب لا يدعم التغيير، سيتم جلب إيميل جديد وإجباره على الإعداد (Setup)...")
+                    status_data['log'].append(f"ℹ️ {target_phone}: لا يدعم التغيير، جلب إيميل جديد وإجبار الإعداد...")
+                    
+                    # 💡 طلب إيميل جديد تماماً لأن القديم تم استهلاكه
+                    new_email_setup, last_msg_id_setup = await fetch_temp_mail(worker_client)
+                    if not new_email_setup:
+                        raise Exception("فشل جلب إيميل جديد لعملية الإعداد (Setup)")
+                    
+                    await target_client.invoke(SendVerifyEmailCode(
+                        email=new_email_setup,
+                        purpose=EmailVerifyPurposeLoginSetup()
+                    ))
+                    purpose_used = EmailVerifyPurposeLoginSetup()
+                    new_email = new_email_setup  # تحديث الإيميل للمتابعة
+                    last_msg_id = last_msg_id_setup
+                    logging.info(f"✅ تم إرسال الطلب (Setup) بنجاح وإجبار الحساب لـ {target_phone}")
+                else:
+                    raise  # إذا كان الخطأ ليس EMAIL_NOT_SETUP، نرفعه للـ except الخارجي
 
-            # 4. انتظار الكود
+            # 4️⃣ انتظار وصول الكود
             logging.info(f"ℹ️ جاري انتظار الكود للرقم {target_phone}...")
             code = await wait_for_email_code(worker_client, last_msg_id)
             if not code:
                 raise Exception("لم يصل الكود من الإيميل خلال الوقت المحدد")
 
-            # 5. تأكيد الكود
+            # 5️⃣ تأكيد الكود (بناءً على نفس الـ purpose الذي تم إرساله)
             logging.info(f"ℹ️ جاري تأكيد الكود {code} للرقم {target_phone}...")
             await target_client.invoke(VerifyEmail(
-                purpose=EmailVerifyPurposeLoginChange(),  # ✅ التصحيح هنا
+                purpose=purpose_used,
                 verification=EmailVerificationCode(code=code)
             ))
 
@@ -3836,45 +3907,36 @@ async def email_changer_worker(worker_session, target_queue, status_data):
             status_data['log'].append(f"✅ {target_phone}: تم التغيير لـ `{new_email}`")
 
         except FloodWait as e:
-            logging.error(f"❌ مراقب [FloodWait] لـ {target_phone}: {e.value}s\n{traceback.format_exc()}")
+            logging.error(f"❌ FloodWait لـ {target_phone}: {e.value}s\n{traceback.format_exc()}")
             status_data['failed'] += 1
             status_data['log'].append(f"❌ {target_phone}: محظور ({e.value}s)")
 
         except RPCError as e:
-            logging.error(f"❌ مراقب [RPCError] لـ {target_phone}: {e}\n{traceback.format_exc()}")
+            logging.error(f"❌ RPCError لـ {target_phone}: {e}\n{traceback.format_exc()}")
             status_data['failed'] += 1
             status_data['log'].append(f"❌ {target_phone}: خطأ تيليجرام: {str(e)[:80]}")
 
         except Exception as e:
-            logging.error(f"❌ مراقب [عام] لـ {target_phone}: {e}\n{traceback.format_exc()}")
+            logging.error(f"❌ خطأ عام لـ {target_phone}: {e}\n{traceback.format_exc()}")
             status_data['failed'] += 1
             status_data['log'].append(f"❌ {target_phone}: {str(e)[:50]}")
 
         finally:
             if target_client and target_client.is_connected:
-                await target_client.disconnect()
-
-            try:
-                target_queue.task_done()
-            except ValueError:
-                pass
+                try:
+                    await target_client.disconnect()
+                except:
+                    pass
+            target_client = None
 
     if worker_client and worker_client.is_connected:
-        await worker_client.disconnect()
+        try:
+            await worker_client.disconnect()
+        except:
+            pass
 
-    logging.info("⚠️ انتهى عمل أحد العمال.")
-    status_data['log'].append("⚠️ انتهى عمل أحد العمال.")
-
-
-
-
-
-
-
-
-
-
-
+    logging.info(f"⚠️ انتهى عمل عامل #{worker_idx}.")
+    status_data['log'].append(f"⚠️ انتهى عامل #{worker_idx}.")
 
 # ==========================================
 # 📊 واجهة التقدم المباشر
@@ -3913,7 +3975,7 @@ async def live_progress_updater(chat_id, msg_id, status_data):
             logging.error(f"Error in live_progress_updater: {e}")
 
 # ==========================================
-# 🟢 دالة التشغيل الرئيسية
+# 🟢 دالة التشغيل الرئيسية - مع التعيين الذكي
 # ==========================================
 async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
     try:
@@ -3922,24 +3984,45 @@ async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
             'success': 0,
             'failed': 0,
             'done': False,
-            'log': [f"🚀 تم بدء الهجوم بـ {len(worker_sessions)} عامل!"]
+            'log': [f"🚀 تم بدء الهجوم بـ {len(worker_sessions)} عامل و {len(targets)} هدف!"]
         }
 
         updater_task = asyncio.create_task(live_progress_updater(chat_id, msg_id, status_data))
 
-        queue = asyncio.Queue()
-        for tgt in targets:
-            queue.put_nowait((tgt[0], tgt[1], tgt[4]))
+        # ====== 🎯 التعيين الذكي: كل عامل لا يغير نفسه ======
+        worker_assignments = {i: [] for i in range(len(worker_sessions))}
 
+        for i, target in enumerate(targets):
+            target_session = target[4]
+            assigned = False
+            # round-robin مع تخطي النفس
+            for offset in range(1, len(worker_sessions) + 1):
+                w_idx = (i + offset) % len(worker_sessions)
+                w_session = worker_sessions[w_idx]
+                if w_session != target_session:
+                    worker_assignments[w_idx].append(target)
+                    assigned = True
+                    break
+            if not assigned:
+                # كل العمال هم نفس الهدف (نادر جداً) - نضطر لإسناده للعامل الافتراضي
+                logging.warning(f"⚠️ لا يوجد عامل غير الهدف لـ {target[1]}، سيتم إسناده للعامل الافتراضي.")
+                worker_assignments[0].append(target)
+
+        # طباعة توزيع المهام للمراقبة
+        for idx, assignments in worker_assignments.items():
+            logging.info(f"📋 عامل #{idx}: مسؤول عن {len(assignments)} حساب")
+
+        # تشغيل العمال الذين لديهم أهداف فقط
         worker_tasks = []
-        for w_session in worker_sessions:
-            task = asyncio.create_task(email_changer_worker(w_session, queue, status_data))
-            worker_tasks.append(task)
+        for idx, w_session in enumerate(worker_sessions):
+            if worker_assignments[idx]:
+                task = asyncio.create_task(
+                    email_changer_worker(w_session, worker_assignments[idx], status_data, idx)
+                )
+                worker_tasks.append(task)
 
-        await queue.join()
-
-        for task in worker_tasks:
-            task.cancel()
+        if worker_tasks:
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
 
         status_data['done'] = True
         await asyncio.sleep(1)
@@ -3959,7 +4042,9 @@ async def run_email_automation(chat_id, msg_id, targets, worker_sessions):
             bot.send_message(chat_id, final_text, reply_markup=markup, parse_mode="Markdown")
 
     except Exception as e:
-        logging.error(f"Error in run_email_automation: {e}\n{traceback.format_exc()}") 
+        logging.error(f"Error in run_email_automation: {e}\n{traceback.format_exc()}")
+        status_data['done'] = True
+
 
 
 
