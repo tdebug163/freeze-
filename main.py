@@ -5764,13 +5764,25 @@ def handle_session_destruction(message):
 
     success, res_msg = run_async(delete_telegram_account_raw(session_str))
     if success:
-        bot.edit_message_text(f"✅ **تم حذف وتدمير الحساب نهائياً!**\n\n{res_msg}", message.chat.id, status_msg.message_id, reply_markup=get_admin_delete_markup())
+        bot.edit_message_text(
+            f"✅ **تم حذف وتدمير الحساب نهائياً!**\n\n{res_msg}",
+            message.chat.id,
+            status_msg.message_id,
+            reply_markup=get_admin_delete_markup()
+        )
     else:
- ٠٨/أكتوبر/٢٠٢٦ ١٨:٤٨:٣٦ GMT+03:00       bot.edit_message_text(f"❌ **فشلت العملية:**\n\n`{res_msg}`", message.chat.id, status_msg.message_id, reply_markup=get_admin_delete_markup())
+        bot.edit_message_text(
+            f"❌ **فشلت العملية:**\n\n`{res_msg}`",
+            message.chat.id,
+            status_msg.message_id,
+            reply_markup=get_admin_delete_markup()
+        )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("unsurveil:"))
 def execute_unsurveil(call):
-    if call.from_user.id not in ADMIN_IDS: return
+    if call.from_user.id not in ADMIN_IDS:
+        return
+
     bot.answer_callback_query(call.id, "تم الإلغاء", show_alert=False)
 
 if __name__ == "__main__":
@@ -5785,8 +5797,15 @@ if __name__ == "__main__":
         try:
             logging.info("📡 جاري الاتصال بسيرفرات تليجرام...")
             # إجبار البوت على تجاهل أخطاء الشبكة والعمل باستمرار
-            bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=15, allowed_updates=telebot.util.update_types)
+            bot.infinity_polling(
+                skip_pending=True,
+                timeout=20,
+                long_polling_timeout=15,
+                allowed_updates=telebot.util.update_types
+            )
         except Exception as e:
             # لو انقطع النت من السيرفر، البوت سينتظر 5 ثواني ويحاول مجدداً ولن يطفى
-            logging.error(f"❌ انقطع الاتصال بالإنترنت من السيرفر! جاري إعادة المحاولة بعد 5 ثواني... \nالسبب: {e}")
+            logging.error(
+                f"❌ انقطع الاتصال بالإنترنت من السيرفر! جاري إعادة المحاولة بعد 5 ثواني... \nالسبب: {e}"
+            )
             time.sleep(5)
