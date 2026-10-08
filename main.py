@@ -3810,7 +3810,7 @@ async def wait_for_email_code(worker_client, last_msg_id):
         return None
 
 # ==========================================
-# ⚙️ العامل (Worker Engine) - النسخة المصححة الكاملة
+# ⚙️ العامل (Worker Engine) - الإصدار المصحح
 # ==========================================
 async def email_changer_worker(worker_session, worker_targets, status_data, worker_idx):
     worker_client = None
@@ -3831,10 +3831,12 @@ async def email_changer_worker(worker_session, worker_targets, status_data, work
         return
 
     for target_data in worker_targets:
+        # 🎯 التصحيح هنا: قراءة العناصر بالـ index لأن الدالة ترجع 5 عناصر
+        target_id = target_data[0]
         target_phone = target_data[1]
+        target_session = target_data[4]
+        
         try:
-            target_id, target_phone, target_session = target_data
-
             logging.info(f"⏳ جاري معالجة الحساب: {target_phone}")
             status_data['log'].append(f"⏳ جاري معالجة {target_phone}...")
 
@@ -3937,6 +3939,11 @@ async def email_changer_worker(worker_session, worker_targets, status_data, work
 
     logging.info(f"⚠️ انتهى عمل عامل #{worker_idx}.")
     status_data['log'].append(f"⚠️ انتهى عامل #{worker_idx}.")
+   
+  
+ 
+
+
 
 # ==========================================
 # 📊 واجهة التقدم المباشر
